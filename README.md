@@ -336,3 +336,36 @@ measurement anchor
 ```
 
 Pixels are outputs of rendering. They are not the identity of the artifact.
+
+---
+
+## Validate Locally
+
+After cloning, run the full proof path with one command:
+
+```bash
+./scripts/validate.sh
+```
+
+This performs:
+
+```text
+build   ✅
+test    ✅
+encode  ✅
+verify  ✅
+render  ✅
+replay  ✅
+```
+
+The expected stable demo digest is:
+
+```text
+sha256:80569a9a425ce9b86a54b3e976eee751e2b46b438f8c5ab7664054acf5f68a59
+```
+
+---
+
+## Continuous Validation
+
+Every push to `main` runs the same validation path through GitHub Actions.
