@@ -1,0 +1,23 @@
+name: Validate CIF v2
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Pillow
+        run: python3 -m pip install --user pillow
+
+      - name: Run validation
+        run: ./scripts/validate.sh
