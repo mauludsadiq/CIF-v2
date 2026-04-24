@@ -1,0 +1,30 @@
+{
+  "format": "CIFv2",
+  "operator": "Phi-CIFv2-1.0.0",
+  "width": 64,
+  "height": 64,
+  "color_space": "LMS",
+  "wavelet": {
+    "family": "db4",
+    "levels": 3,
+    "boundary": "symmetric",
+    "coefficient_order": "channel-level-band-row-major"
+  },
+  "edge_model": "cubic_bezier_v1_polyline_fit",
+  "procedural_model": "one_over_f_tile_v1",
+  "inr_model": "siren_3x32_v1_cpu_reference",
+  "residue": {
+    "p": 7,
+    "n": 3,
+    "modulus": 343
+  },
+  "hashes": {
+    "canonical_lms": "sha256:e9df9625a8176e267e2aeedfc6f729662372554b755236b324c97a82e9fac111",
+    "edges": "sha256:37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+    "inr": "sha256:3bc35e17ac651d75ced801d1ae6af84782a656c1633c6b1f9eea6318ec6ac445",
+    "lambda_mod": "sha256:702a2d5b294146129cb15b7a08cb4223904bc9b67ba6306034e919dfb36505bf",
+    "lambda_real": "sha256:da14b4e6fdd9d6afc902cca9ad9253437ba159634b526cca13af088766b16e21",
+    "preview": "sha256:810145d2240851ed408c189a7421f6415b78183f84ac0fed05a8b11ed3d06ef5",
+    "procedural": "sha256:aa935e2893f8e85f247598a1e66b4e9e77bcd36e4bb15218bf771d7676b166f7"
+  }
+}

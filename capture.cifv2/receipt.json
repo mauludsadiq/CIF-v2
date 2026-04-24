@@ -1,0 +1,39 @@
+{
+  "receipt_version": "FARD-CIF-RECEIPT-1",
+  "operator": "Phi-CIFv2-1.0.0",
+  "input_digest": "sha256:e9df9625a8176e267e2aeedfc6f729662372554b755236b324c97a82e9fac111",
+  "steps": [
+    {
+      "name": "canonicalize_input",
+      "output": "canonical_lms.tensor",
+      "digest": "sha256:e9df9625a8176e267e2aeedfc6f729662372554b755236b324c97a82e9fac111"
+    },
+    {
+      "name": "wavelet_anchor",
+      "output": "lambda_real.bin",
+      "digest": "sha256:da14b4e6fdd9d6afc902cca9ad9253437ba159634b526cca13af088766b16e21"
+    },
+    {
+      "name": "structural_edges",
+      "output": "edges.cifedge",
+      "digest": "sha256:37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+    },
+    {
+      "name": "procedural_residual",
+      "output": "procedural.json",
+      "digest": "sha256:aa935e2893f8e85f247598a1e66b4e9e77bcd36e4bb15218bf771d7676b166f7"
+    },
+    {
+      "name": "neural_residual",
+      "output": "inr.siren",
+      "digest": "sha256:3bc35e17ac651d75ced801d1ae6af84782a656c1633c6b1f9eea6318ec6ac445"
+    },
+    {
+      "name": "modular_residue",
+      "output": "lambda_mod.bin",
+      "digest": "sha256:702a2d5b294146129cb15b7a08cb4223904bc9b67ba6306034e919dfb36505bf"
+    }
+  ],
+  "manifest_digest": "sha256:a05aa3c2b0fd9671b5cfd1a130efdc81186e37d1127eb1dab466f31641d22fd0",
+  "artifact_digest": "sha256:80569a9a425ce9b86a54b3e976eee751e2b46b438f8c5ab7664054acf5f68a59"
+}
