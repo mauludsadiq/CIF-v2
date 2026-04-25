@@ -279,3 +279,56 @@ Serve locally:
 
     python3 -m http.server 8081
     open http://localhost:8081/viewer.html
+
+## CIF-RDO v0
+
+CIF-RDO is the optimizer layer above CIF v2. Where CIF v2 proves executable image identity, CIF-RDO proves deterministic representation selection.
+
+See docs/CIF_RDO_v0.md for the frozen specification.
+
+### Objective
+
+For each 32x32 tile, CIF-RDO selects the encoder minimizing:
+
+    J(E,R) = rate_bits(E,R) + quality_lambda * D_oklab(E,R)
+
+J is computed in fixed-point integer arithmetic. Selection is deterministic and reproducible.
+
+### Encoders (v0)
+
+    constant_lms     96 bits   mean LMS value
+    affine_lms      576 bits   linear fit over (x, y)
+    quadratic_lms  1152 bits   quadratic fit over (1, x, y, x^2, y^2, xy)
+
+### CLI
+
+    cifv2 rdo-encode --input photo.jpg --out photo.cifrdo --tile 32 --quality 1.0
+
+### Encoder Distribution
+
+At quality=1.0 on a 256x256 natural scene (8x8 tile grid):
+
+    constant_lms    34 tiles  (53.1%)  flat regions
+    affine_lms      30 tiles  (46.9%)  gradient regions
+    quadratic_lms    0 tiles  (0.0%)   rate too high at this quality
+
+At quality=10.0:
+
+    affine_lms      57 tiles  (89.1%)
+    constant_lms     5 tiles  ( 7.8%)
+    quadratic_lms    2 tiles  ( 3.1%)  earns its bits on complex tiles
+
+The solver activates higher-cost encoders only when distortion savings justify the rate increase. This is the correct behavior.
+
+### Artifact Layout
+
+    photo.cifrdo/
+      manifest.json
+      receipt.json
+      regions/
+        tree.json      tile grid, encoder selections, J scores
+        payloads.bin   concatenated tile payloads
+
+### Core Invariant
+
+    same input + same quality_lambda = same artifact_digest
