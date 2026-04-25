@@ -278,3 +278,18 @@ preview.png  →  valid thumbnail raster
 No metadata. No extensions. No CIF knowledge required. The thumbnail is a standalone PNG produced by the CIF render path at canonical resolution before artifact assembly.
 
 CIF-aware applications open the artifact directory directly and render at any target resolution.
+## Validated
+
+Tested against a 256x256 synthetic image with gradients, sharp edges, and texture.
+
+Encode: 1.7s. Verify: 6 steps clean. Replay: identical artifact digest.
+
+Render scale proof:
+
+    artifact_digest  sha256:9fa24044...  invariant across all renders
+    render_digest    sha256:c7bbd6f1...  256x256
+    render_digest    sha256:cd220afe...  1024x1024
+    render_digest    sha256:b2872655...  4096x4096
+
+A 256x256 source rendered to 4096x4096 from the same artifact.
+The artifact digest did not change. The render digest is deterministic per resolution.
