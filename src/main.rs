@@ -448,6 +448,13 @@ fn render(artifact_path: &Path, out: &Path, width: u32, height: u32) -> Result<(
         }
     }
 
+    // Edge influence scales with magnification — zero at 1x, full at 4x+
+    let mag = (ow / cw).max(oh / ch);
+    let edge_weight = (1.0 - 1.0 / mag.max(1.0)).clamp(0.0, 1.0);
+
+    // SIREN weight also scales with magnification
+    let siren_weight = (1.0 - 1.0 / mag.max(1.0)).clamp(0.0, 1.0);
+
     let mut img: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::new(width, height);
 
     for py in 0..height as usize {
@@ -506,7 +513,7 @@ fn render(artifact_path: &Path, out: &Path, width: u32, height: u32) -> Result<(
                 if dist < outer {
                     let t_blend = ((outer - dist) / sigma.max(1e-6)).clamp(0.0, 1.0);
                     let smooth = t_blend * t_blend * (3.0 - 2.0 * t_blend);
-                    let influence = contrast * smooth * signed;
+                    let influence = contrast * smooth * signed * edge_weight;
                     lms[0] += influence * 0.6;
                     lms[1] += influence * 0.3;
                     lms[2] += influence * 0.1;
@@ -517,9 +524,9 @@ fn render(artifact_path: &Path, out: &Path, width: u32, height: u32) -> Result<(
             let nx = (px as f32 + 0.5) / ow;
             let ny = (py as f32 + 0.5) / oh;
             let siren_delta = siren_eval(nx, ny, &siren_weights, &siren_arch);
-            lms[0] += siren_delta[0];
-            lms[1] += siren_delta[1];
-            lms[2] += siren_delta[2];
+            lms[0] += siren_delta[0] * siren_weight;
+            lms[1] += siren_delta[1] * siren_weight;
+            lms[2] += siren_delta[2] * siren_weight;
 
             let rgb = lms_to_srgb(lms);
             img.put_pixel(px as u32, py as u32, Rgba([rgb[0], rgb[1], rgb[2], 255]));
