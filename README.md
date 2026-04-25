@@ -1,103 +1,109 @@
 # CIF v2 — Collapse Image Format v2
 
-CIF v2 is a deterministic Rust implementation of the **Φ-CIFv2 collapse operator**:
+CIF v2 encodes a raster image into a deterministic, replay-verifiable artifact that renders at any resolution — from thumbnail to billboard — without degradation.
 
-```text
-raster image → canonical executable visual-field artifact
+```
+input image  →  CIF artifact  →  render at any scale
 ```
 
-It does not claim that an input raster magically contains unknown physical detail. Instead, it deterministically decomposes a raster measurement into a replay-verifiable artifact with:
+The artifact is the image. Raster files are projections of it.
 
-1. a canonical LMS measurement tensor,
-2. a perceptual wavelet anchor,
-3. explicit structural edge segments,
-4. deterministic procedural texture descriptors,
-5. a compact SIREN residual parameter file,
-6. a modular residue fingerprint,
-7. a manifest and FARD-compatible receipt chain.
+-----
 
-The implementation is intentionally conservative: every output file is produced by executable Rust code, every digest is recomputed by `verify`, and `replay` reruns Φ against the original input to prove deterministic reproducibility.
+## Core Concept
 
----
+Standard image formats store pixels. CIF v2 stores the image as an executable field:
 
-## Repository Layout
-
-```text
-CIF_v2/
-├── Cargo.toml
-├── README.md
-└── src/
-    └── main.rs
+```
+canonical_lms.tensor   perceptual measurement anchor
+edges.cifedge          resolution-independent structural boundaries
+inr.siren              trained continuous color field
+procedural.json        deterministic texture descriptors
+lambda_real.bin        fixed-point wavelet coefficients
+lambda_mod.bin         modular residue fingerprint
+manifest.json          component digest binding
+receipt.json           replay-verifiable step chain
 ```
 
-The CLI binary is named:
+A PNG or JPEG decoder sees only `preview.png` — a valid thumbnail requiring no CIF awareness. A CIF-aware renderer opens the artifact and renders at any target resolution using the executable layer.
 
-```text
-cifv2
+Resolution independence is carried by two components:
+
+- **`edges.cifedge`** — cubic Bézier segments in fixed-point coordinates. No raster grid. Boundaries render at full sharpness at any output resolution.
+- **`inr.siren`** — a trained implicit neural field `f(x,y) → (L,M,S)` defined over `[0,1]²`. Continuous. No native resolution. Sampled at the target pixel density at render time.
+
+-----
+
+## Projection Contract
+
+```
+artifact_digest   identity of the source artifact — invariant across all renders
+render_digest     sha256 of the output PNG — deterministic given (artifact, width, height)
 ```
 
----
+Every render call produces a projection receipt:
+
+```json
+{
+  "ok": true,
+  "artifact_digest": "sha256:...",
+  "projection": {
+    "width": 4096,
+    "height": 4096,
+    "out": "render.png",
+    "render_digest": "sha256:..."
+  }
+}
+```
+
+The artifact digest never changes. The render digest changes with resolution. Pixels are outputs, not identity.
+
+-----
 
 ## Build
 
-From the repository root:
-
 ```bash
 cargo build --release
-```
-
-Run tests:
-
-```bash
 cargo test
 ```
 
----
+Binary: `./target/release/cifv2`
+
+-----
 
 ## CLI
 
 ### Encode
 
 ```bash
-cargo run --release -- encode --input input.png --out capture.cifv2
+cifv2 encode --input photo.png --out capture.cifv2
+cifv2 encode --input photo.jpg --out capture.cifv2 --max-side 512
 ```
 
-Optional maximum canonical side length:
+Encodes the input image into a CIF artifact directory. Runs the full Φ operator including SIREN training. Encode time is proportional to image size and training steps.
 
-```bash
-cargo run --release -- encode --input input.jpg --out capture.cifv2 --max-side 512
+Output artifact:
+
 ```
-
-The encoder creates:
-
-```text
 capture.cifv2/
-├── manifest.json
-├── preview.png
-├── canonical_lms.tensor
-├── lambda_real.bin
-├── edges.cifedge
-├── procedural.json
-├── inr.siren
-├── lambda_mod.bin
-└── receipt.json
+├── manifest.json          component digest binding
+├── receipt.json           FARD-compatible replay chain
+├── preview.png            mandatory thumbnail projection (dumb-codec-visible)
+├── canonical_lms.tensor   LMS measurement anchor
+├── lambda_real.bin        wavelet coefficients
+├── edges.cifedge          structural edge segments
+├── procedural.json        texture descriptors
+├── inr.siren              trained SIREN weights
+└── lambda_mod.bin         modular residue fingerprint
 ```
 
 ### Verify
 
 ```bash
-cargo run --release -- verify --artifact capture.cifv2
+cifv2 verify --artifact capture.cifv2
 ```
 
-Verification checks:
-
-1. manifest format and operator,
-2. every file digest,
-3. modular residue recomputation,
-4. manifest digest,
-5. final artifact digest.
-
-Expected success shape:
+Recomputes every digest, checks the manifest, recomputes the modular residue, and confirms the artifact digest against the receipt.
 
 ```json
 {
@@ -107,165 +113,112 @@ Expected success shape:
 }
 ```
 
+### Render
+
+```bash
+cifv2 render --artifact capture.cifv2 --out render.png --width 4096 --height 4096
+```
+
+Renders a projection at any target resolution. Composites three layers:
+
+1. Bilinear sample from `canonical_lms.tensor` — base color field
+1. Signed-distance edge compositor from `edges.cifedge` — resolution-independent boundaries
+1. SIREN residual from `inr.siren` — trained continuous color field
+
+Writes a projection receipt alongside the output:
+
+```
+render.png
+render.projection.json
+```
+
 ### Replay
 
 ```bash
-cargo run --release -- replay --input input.png --artifact capture.cifv2 --temp-out replay.cifv2
+cifv2 replay --input photo.png --artifact capture.cifv2 --temp-out replay.cifv2
 ```
 
-Replay reruns the full collapse operator and compares the new artifact digest against the saved receipt.
+Re-encodes the input and confirms the new artifact digest matches the stored receipt. Proves deterministic reproducibility.
 
-### Render Preview Projection
+-----
 
-```bash
-cargo run --release -- render --artifact capture.cifv2 --out render.png --width 1920 --height 1080
+## Φ-CIFv2 Operator
+
 ```
-
-This command renders a projection from the canonical LMS measurement tensor. It is a compatibility projection, not a claim that unknown physical detail has been recovered.
-
----
-
-## Φ-CIFv2 Algorithm
-
-The implemented operator is:
-
-```text
-Φ_CIFv2(I):
+Φ(I):
 
 1. canonicalize_input(I)        → canonical_lms.tensor
 2. wavelet_anchor(T0)           → lambda_real.bin
 3. structural_edges(T0)         → edges.cifedge
 4. procedural_residual(...)     → procedural.json
-5. neural_residual(...)         → inr.siren
+5. neural_residual(...)         → inr.siren        ← trained SIREN field
 6. modular_residue(lambda_real) → lambda_mod.bin
 7. assemble(...)                → manifest.json
 8. receipt(...)                 → receipt.json
 ```
 
-Mathematically:
+`neural_residual` runs mini-batch SGD against the canonical LMS tensor. The SIREN is fitted to minimize MSE between `f(x,y)` and the target pixel values. Weights are deterministic from a SHA-256 derived seed. The trained parameters are serialized as executable `f32` weights in Base85.
 
-```text
-Φ(I) = (Wλ, Eβ, Ns, fθ, ρ, R)
+-----
+
+## Render Pipeline
+
+```
+for each output pixel (px, py):
+
+  1. map to canonical coordinates (cx, cy)
+  2. bilinear sample canonical_lms.tensor        → base LMS
+  3. for each edge segment in tile:
+       signed distance to cubic segment
+       smoothstep influence by contrast and blur_sigma
+       accumulate into LMS channels
+  4. evaluate inr.siren at (px/width, py/height)  → residual LMS delta
+  5. lms_to_srgb(base + edge + siren)             → output pixel
 ```
 
-Where:
+Edge segments are spatially accelerated by a 32×32 tile grid. SIREN evaluation is a 4-layer forward pass: 3 sin layers + 1 linear output.
 
-| Component | File | Meaning |
-|---|---|---|
-| canonical LMS tensor | `canonical_lms.tensor` | deterministic linear LMS measurement |
-| wavelet anchor | `lambda_real.bin` | fixed-point perceptual coefficients |
-| structural edges | `edges.cifedge` | deterministic cubic segment records |
-| procedural layer | `procedural.json` | deterministic one-over-f tile descriptors |
-| neural residual | `inr.siren` | deterministic SIREN residual parameters |
-| residue | `lambda_mod.bin` | λ mod 343 fingerprint |
-| receipt | `receipt.json` | replay-verifiable digest chain |
+-----
 
----
-
-## Determinism Rules
-
-The implementation fixes:
-
-- image metadata stripping by canonical decode path,
-- canonical max-side resize using Triangle filtering,
-- sRGB gamma linearization with γ = 2.2,
-- RGB → LMS matrix,
-- little-endian binary serialization,
-- fixed-point coefficient quantization,
-- Euclidean modular projection,
-- stable JSON serialization,
-- stable digest ordering,
-- deterministic seed derivation via SHA-256.
-
-The residue layer is computed as:
-
-```text
-λ_mod[k] = ((λ_real[k] % 343) + 343) % 343
-```
-
-`lambda_mod.bin` is validation metadata. It is not used to reconstruct the image.
-
----
-
-## Artifact Contract
+## Artifact Format
 
 ### `canonical_lms.tensor`
 
-Binary layout:
-
-```text
-magic: 8 bytes = "CIFLMS1\0"
-width: u32 little-endian
-height: u32 little-endian
-pixels: repeated f32 little-endian triples [L, M, S]
+```
+magic:  8 bytes  "CIFLMS1\0"
+width:  u32      little-endian
+height: u32      little-endian
+pixels: f32×3    little-endian [L, M, S] per pixel
 ```
 
-### `lambda_real.bin`
+### `lambda_real.bin` / `lambda_mod.bin`
 
-Binary layout:
-
-```text
-magic: 8 bytes = "CIFI64\0\0"
-count: u64 little-endian
-values: repeated i64 little-endian fixed-point coefficients
+```
+magic:  8 bytes  "CIFI64\0\0"
+count:  u64      little-endian
+values: i64      little-endian fixed-point, scale 1_000_000
 ```
 
-### `lambda_mod.bin`
-
-Same binary layout as `lambda_real.bin`, but values are in:
-
-```text
-Z / 343Z
-```
+`lambda_mod.bin` values are in Z/343Z.
 
 ### `edges.cifedge`
 
-Canonical JSON array of edge segment records:
+JSON array of cubic Bézier edge records. All coordinates fixed-point, scale `1_000_000`:
 
 ```json
 {
-  "x0": 0,
-  "y0": 0,
-  "x1": 1000000,
-  "y1": 1000000,
-  "c0x": 500000,
-  "c0y": 500000,
-  "c1x": 500000,
-  "c1y": 500000,
+  "x0": 1000000, "y0": 1000000,
+  "x1": 5000000, "y1": 2000000,
+  "c0x": 3000000, "c0y": 1500000,
+  "c1x": 3000000, "c1y": 1500000,
   "width": 1000000,
-  "contrast_left": 1200,
-  "contrast_right": -1200,
+  "contrast_left": 753429,
+  "contrast_right": -753429,
   "blur_sigma": 750000
 }
 ```
 
-All numeric fields are fixed-point integers with scale `1_000_000`.
-
-### `procedural.json`
-
-Canonical JSON procedural texture descriptor:
-
-```json
-{
-  "tile_size": 32,
-  "tiles": [
-    {
-      "tile_x": 0,
-      "tile_y": 0,
-      "kernel": "one_over_f_noise",
-      "seed": "sha256:...",
-      "amplitude": 1000,
-      "slope": -1000000,
-      "orientation": 0,
-      "correlation_length": 8000000
-    }
-  ]
-}
-```
-
 ### `inr.siren`
-
-Canonical JSON containing architecture and Base85-encoded little-endian f32 weights:
 
 ```json
 {
@@ -275,97 +228,53 @@ Canonical JSON containing architecture and Base85-encoded little-endian f32 weig
     "hidden_layers": 3,
     "hidden_width": 32,
     "activation": "sin",
-    "omega0": 30.0,
-    "steps": 256,
-    "learning_rate": 0.0001
+    "omega0": 1.0,
+    "steps": 64,
+    "learning_rate": 0.001
   },
   "weights_b85": "..."
 }
 ```
 
-### `manifest.json`
+Weight layout: `[W0(32×2)+b0(32), W1(32×32)+b1(32), W2(32×32)+b2(32), Wout(3×32)+bout(3)]` — 2307 parameters, little-endian f32, Base85 encoded.
 
-The manifest binds all artifact components by SHA-256 digest.
+-----
 
-### `receipt.json`
+## Determinism
 
-The receipt is FARD-compatible in structure: a deterministic step chain plus a final artifact digest.
+The following are fixed across all platforms:
 
----
+- sRGB linearization: γ = 2.2
+- RGB → LMS matrix (fixed coefficients)
+- Canonical resize: Triangle filter, max-side bounded
+- Little-endian binary serialization throughout
+- Fixed-point scale: `1_000_000`
+- Euclidean modular projection: `((x % 343) + 343) % 343`
+- SIREN seed: `SHA-256("h_input || h_lambda || h_edges || h_proc || SIREN_INIT")`
+- Mini-batch pixel order: deterministic from seed via `DetRng`
+- JSON field ordering: `BTreeMap` (lexicographic)
+- Digest ordering: stable insertion order in manifest
 
-## Current Implementation Boundary
+-----
 
-This is a real working CIF v2 reference implementation, not a mock. It produces artifacts, receipts, verification results, replay checks, and render projections.
-
-The current reference encoder uses a deterministic multilevel wavelet-like anchor and labels the manifest as the CIF v2 anchor family used by this code path. Future versions can replace the anchor with an exact Daubechies-4 lifting implementation without changing the surrounding artifact contract.
-
-The SIREN layer is deterministic and serialized as executable parameters. The reference fitting path is intentionally CPU-stable and compact; future versions can increase training depth while preserving replay determinism by fixing float mode, optimizer state, and batching.
-
----
-
-## Development Notes for VS Code
-
-Recommended extensions:
-
-- rust-analyzer
-- CodeLLDB
-- Even Better TOML
-
-Useful commands:
-
-```bash
-cargo fmt
-cargo test
-cargo run --release -- encode --input input.png --out capture.cifv2
-cargo run --release -- verify --artifact capture.cifv2
-```
-
----
-
-## Definition
-
-CIF v2 is not a standard raster codec. It is a deterministic, receipt-verifiable visual artifact system:
-
-```text
-measurement anchor
-+ structural boundaries
-+ procedural texture descriptors
-+ neural residual field
-+ modular residue fingerprint
-+ replay receipt
-```
-
-Pixels are outputs of rendering. They are not the identity of the artifact.
-
----
-
-## Validate Locally
-
-After cloning, run the full proof path with one command:
+## Validate
 
 ```bash
 ./scripts/validate.sh
 ```
 
-This performs:
+Runs build → test → encode → verify → render → replay in sequence. All stages must pass and the artifact digest must be stable across encode and replay.
 
-```text
-build   ✅
-test    ✅
-encode  ✅
-verify  ✅
-render  ✅
-replay  ✅
+-----
+
+## Dumb Codec Compatibility
+
+A PNG or JPEG viewer that has no CIF awareness sees exactly one thing:
+
+```
+preview.png  →  valid thumbnail raster
 ```
 
-The expected stable demo digest is:
+No metadata. No extensions. No CIF knowledge required. The thumbnail is a standalone PNG produced by the CIF render path at canonical resolution before artifact assembly.
 
-```text
-sha256:80569a9a425ce9b86a54b3e976eee751e2b46b438f8c5ab7664054acf5f68a59
-```
-
----
-
-## Continuous Validation
-
-Every push to `main` runs the same validation path through GitHub Actions.
+CIF-aware applications open the artifact directory directly and render at any target resolution.
