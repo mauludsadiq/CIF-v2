@@ -236,21 +236,122 @@ fn replay(input: &Path, artifact: &Path, temp_out: &Path, max_side: u32) -> Resu
 }
 
 fn render(artifact: &Path, out: &Path, width: u32, height: u32) -> Result<()> {
-    let verified = verify(artifact)?;
-    let artifact_digest = verified["artifact_digest"].as_str().unwrap_or("").to_string();
+    let receipt: Receipt = read_json(&artifact.join("receipt.json"))?;
+    let artifact_digest = receipt.artifact_digest.clone();
+
     let t = read_tensor(&artifact.join("canonical_lms.tensor"))?;
-    let mut img: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::new(width, height);
-    for y in 0..height as usize {
-        for x in 0..width as usize {
-            let sx = ((x as f32 + 0.5) * t.width as f32 / width as f32).floor().min((t.width - 1) as f32) as usize;
-            let sy = ((y as f32 + 0.5) * t.height as f32 / height as f32).floor().min((t.height - 1) as f32) as usize;
-            let rgb = lms_to_srgb(t.data[sy*t.width+sx]);
-            img.put_pixel(x as u32, y as u32, Rgba([rgb[0], rgb[1], rgb[2], 255]));
+    let edges: Vec<EdgeSegment> = read_json(&artifact.join("edges.cifedge"))?;
+
+    const SCALE: f32 = 1_000_000.0;
+    let cw = t.width as f32;
+    let ch = t.height as f32;
+    let ow = width as f32;
+    let oh = height as f32;
+
+    const TILE: usize = 32;
+    let tiles_x = (width as usize + TILE - 1) / TILE;
+    let tiles_y = (height as usize + TILE - 1) / TILE;
+    let mut tile_edges: Vec<Vec<usize>> = vec![Vec::new(); tiles_x * tiles_y];
+
+    for (ei, seg) in edges.iter().enumerate() {
+        let pad = (seg.width + seg.blur_sigma) as f32 / SCALE;
+        let ex0 = seg.x0.min(seg.x1).min(seg.c0x).min(seg.c1x) as f32 / SCALE - pad;
+        let ex1 = seg.x0.max(seg.x1).max(seg.c0x).max(seg.c1x) as f32 / SCALE + pad;
+        let ey0 = seg.y0.min(seg.y1).min(seg.c0y).min(seg.c1y) as f32 / SCALE - pad;
+        let ey1 = seg.y0.max(seg.y1).max(seg.c0y).max(seg.c1y) as f32 / SCALE + pad;
+
+        let px0 = ((ex0 * ow / cw) as usize).saturating_sub(1);
+        let px1 = ((ex1 * ow / cw) as usize + 1).min(width as usize - 1);
+        let py0 = ((ey0 * oh / ch) as usize).saturating_sub(1);
+        let py1 = ((ey1 * oh / ch) as usize + 1).min(height as usize - 1);
+
+        let tx0 = px0 / TILE;
+        let tx1 = px1 / TILE;
+        let ty0 = py0 / TILE;
+        let ty1 = py1 / TILE;
+
+        for ty in ty0..=ty1.min(tiles_y - 1) {
+            for tx in tx0..=tx1.min(tiles_x - 1) {
+                tile_edges[ty * tiles_x + tx].push(ei);
+            }
         }
     }
+
+    let mut img: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::new(width, height);
+
+    for py in 0..height as usize {
+        let ty = py / TILE;
+        for px in 0..width as usize {
+            let tx = px / TILE;
+
+            let cx = (px as f32 + 0.5) * cw / ow;
+            let cy = (py as f32 + 0.5) * ch / oh;
+
+            let fx = cx - 0.5;
+            let fy = cy - 0.5;
+            let x0 = (fx.floor() as isize).clamp(0, t.width as isize - 1) as usize;
+            let y0 = (fy.floor() as isize).clamp(0, t.height as isize - 1) as usize;
+            let x1 = (x0 + 1).min(t.width - 1);
+            let y1 = (y0 + 1).min(t.height - 1);
+            let tx_ = (fx - fx.floor()).clamp(0.0, 1.0);
+            let ty_ = (fy - fy.floor()).clamp(0.0, 1.0);
+
+            let s = |xi: usize, yi: usize| t.data[yi * t.width + xi];
+            let lerp3 = |a: [f32;3], b: [f32;3], t: f32| -> [f32;3] {
+                [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t]
+            };
+            let top    = lerp3(s(x0,y0), s(x1,y0), tx_);
+            let bottom = lerp3(s(x0,y1), s(x1,y1), tx_);
+            let mut lms = lerp3(top, bottom, ty_);
+
+            for &ei in &tile_edges[ty * tiles_x + tx] {
+                let seg = &edges[ei];
+                let half_w   = seg.width as f32 / SCALE / 2.0;
+                let sigma    = seg.blur_sigma as f32 / SCALE;
+                let contrast = seg.contrast_left as f32 / SCALE;
+
+                let p0x = seg.x0 as f32 / SCALE;
+                let p0y = seg.y0 as f32 / SCALE;
+                let p1x = seg.x1 as f32 / SCALE;
+                let p1y = seg.y1 as f32 / SCALE;
+                let dx = p1x - p0x;
+                let dy = p1y - p0y;
+                let len2 = dx*dx + dy*dy;
+
+                let (dist, signed) = if len2 < 1e-10 {
+                    let d = ((cx-p0x).powi(2) + (cy-p0y).powi(2)).sqrt();
+                    (d, 1.0f32)
+                } else {
+                    let t_param = ((cx-p0x)*dx + (cy-p0y)*dy) / len2;
+                    let t_param = t_param.clamp(0.0, 1.0);
+                    let nx = cx - (p0x + t_param*dx);
+                    let ny = cy - (p0y + t_param*dy);
+                    let dist = (nx*nx + ny*ny).sqrt();
+                    let cross = dx*ny - dy*nx;
+                    (dist, cross.signum())
+                };
+
+                let outer = half_w + sigma;
+                if dist < outer {
+                    let t_blend = ((outer - dist) / sigma.max(1e-6)).clamp(0.0, 1.0);
+                    let smooth = t_blend * t_blend * (3.0 - 2.0 * t_blend);
+                    let influence = contrast * smooth * signed;
+                    lms[0] += influence * 0.6;
+                    lms[1] += influence * 0.3;
+                    lms[2] += influence * 0.1;
+                }
+            }
+
+            let rgb = lms_to_srgb(lms);
+            img.put_pixel(px as u32, py as u32, Rgba([rgb[0], rgb[1], rgb[2], 255]));
+        }
+    }
+
     img.save(out)?;
+
     let render_digest = digest_file(out)?;
     let projection_receipt = serde_json::json!({
+        "ok": true,
         "artifact_digest": artifact_digest,
         "projection": {
             "width": width,
