@@ -144,7 +144,7 @@ fn encode(input: &Path, out: &Path, max_side: u32) -> Result<()> {
     let h_lambda = digest_file(&out.join("lambda_real.bin"))?;
 
     let edges = structural_edges(&t0);
-    write_json(&edges, &out.join("edges.cifedge"))?;
+    write_edges_bin(&edges, &out.join("edges.cifedge"))?;
     let h_edges = digest_file(&out.join("edges.cifedge"))?;
 
     let proc = procedural_residual(&t0, &lambda_q, &edges, &h_input);
@@ -250,7 +250,7 @@ fn render(artifact: &Path, out: &Path, width: u32, height: u32) -> Result<()> {
     let artifact_digest = receipt.artifact_digest.clone();
 
     let t = read_tensor(&artifact.join("canonical_lms.tensor"))?;
-    let edges: Vec<EdgeSegment> = read_json(&artifact.join("edges.cifedge"))?;
+    let edges: Vec<EdgeSegment> = read_edges_bin(&artifact.join("edges.cifedge"))?;
     let siren_file: SirenFile = read_json(&artifact.join("inr.siren"))?;
     let siren_arch = siren_file.architecture.clone();
     let siren_raw = base85::decode(&siren_file.weights_b85).map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -433,6 +433,42 @@ fn wavelet_anchor(t: &Tensor) -> Vec<i64> {
         }
     }
     out
+}
+
+fn write_edges_bin(edges: &[EdgeSegment], path: &Path) -> Result<()> {
+    let mut buf = Vec::with_capacity(16 + edges.len() * 96);
+    buf.extend_from_slice(b"CIFEDGE1");
+    buf.extend_from_slice(&(edges.len() as u64).to_le_bytes());
+    for e in edges {
+        for v in [e.x0,e.y0,e.x1,e.y1,e.c0x,e.c0y,e.c1x,e.c1y,e.width,e.contrast_left,e.contrast_right,e.blur_sigma] {
+            buf.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    let compressed = zstd::encode_all(buf.as_slice(), 3)?;
+    fs::write(path, compressed)?;
+    Ok(())
+}
+
+fn read_edges_bin(path: &Path) -> Result<Vec<EdgeSegment>> {
+    let compressed = fs::read(path)?;
+    let raw = zstd::decode_all(compressed.as_slice())?;
+    if &raw[0..8] != b"CIFEDGE1" { bail!("bad edge magic"); }
+    let count = u64::from_le_bytes(raw[8..16].try_into().unwrap()) as usize;
+    let mut edges = Vec::with_capacity(count);
+    let mut i = 16usize;
+    for _ in 0..count {
+        let mut v = [0i64; 12];
+        for j in 0..12 {
+            v[j] = i64::from_le_bytes(raw[i..i+8].try_into().unwrap());
+            i += 8;
+        }
+        edges.push(EdgeSegment {
+            x0:v[0],y0:v[1],x1:v[2],y1:v[3],
+            c0x:v[4],c0y:v[5],c1x:v[6],c1y:v[7],
+            width:v[8],contrast_left:v[9],contrast_right:v[10],blur_sigma:v[11],
+        });
+    }
+    Ok(edges)
 }
 
 fn structural_edges(t: &Tensor) -> Vec<EdgeSegment> {
