@@ -14,6 +14,7 @@ use crate::rdo::encoders::constant::ConstantLms;
 use crate::rdo::encoders::affine::AffineLms;
 use crate::rdo::encoders::quadratic::QuadraticLms;
 use crate::rdo::encoders::wavelet::WaveletTile;
+use crate::rdo::encoders::edge::EdgeTile;
 use crate::rdo::types::RegionEncoder;
 
 fn lms_to_srgb(l: i64, m: i64, s: i64) -> [u8; 3] {
@@ -33,6 +34,7 @@ fn get_encoder(name: &str) -> Box<dyn RegionEncoder> {
         "affine_lms"    => Box::new(AffineLms),
         "quadratic_lms" => Box::new(QuadraticLms),
         "wavelet_tile"  => Box::new(WaveletTile),
+        "edge_tile"     => Box::new(EdgeTile),
         other => panic!("unknown encoder: {other}"),
     }
 }
