@@ -711,6 +711,23 @@ fn siren_eval(x: f32, y: f32, weights: &[f32], arch: &SirenArch) -> [f32; 3] {
     [o[0], o[1], o[2]]
 }
 
+fn lms_to_oklab(lms: [f32; 3]) -> [f32; 3] {
+    let r =  5.47221206*lms[0] - 4.64196010*lms[1] + 0.16963708*lms[2];
+    let g = -1.12524190*lms[0] + 2.29317094*lms[1] - 0.16789520*lms[2];
+    let b =  0.02980165*lms[0] - 0.19318073*lms[1] + 1.16364789*lms[2];
+    let r = r.clamp(0.0, 1.0);
+    let g = g.clamp(0.0, 1.0);
+    let b = b.clamp(0.0, 1.0);
+    let l = (0.4122214708*r + 0.5363325363*g + 0.0514459929*b).cbrt();
+    let m = (0.2119034982*r + 0.6806995451*g + 0.1073969566*b).cbrt();
+    let s = (0.0883024619*r + 0.2817188376*g + 0.6299787005*b).cbrt();
+    [
+        0.2104542553*l + 0.7936177850*m - 0.0040720468*s,
+        1.9779984951*l - 2.4285922050*m + 0.4505937099*s,
+        0.0259040371*l + 0.7827717662*m - 0.8086757660*s,
+    ]
+}
+
 fn neural_residual(t:&Tensor,_lambda:&[i64],_edges:&[EdgeSegment],_proc:&Procedural,h_input:&str,h_lambda:&str,h_edges:&str,h_proc:&str)->SirenFile{
     let seed = sha256_hex(format!("{}{}{}{}SIREN_INIT", h_input,h_lambda,h_edges,h_proc).as_bytes());
     let mut rng = DetRng::from_hex(&seed);
@@ -799,9 +816,14 @@ fn neural_residual(t:&Tensor,_lambda:&[i64],_edges:&[EdgeSegment],_proc:&Procedu
                 o[r] = s;
             }
 
-            // --- Loss gradient: dL/do = (2/OUT)(o - target) ---
+            // --- Loss gradient in OKLab space ---
+            let o_lab = lms_to_oklab(o);
+            let t_lab = lms_to_oklab(target);
+            let mut d_lab = [0.0f32; OUT];
+            for c in 0..OUT { d_lab[c] = (2.0 / OUT as f32) * (o_lab[c] - t_lab[c]); }
+            // First-order approximation: pass OKLab gradient through to LMS output
             let mut d_o = [0.0f32; OUT];
-            for c in 0..OUT { d_o[c] = (2.0 / OUT as f32) * (o[c] - target[c]); }
+            for c in 0..OUT { d_o[c] = d_lab[c]; }
 
             // --- Backward pass ---
             let goff = 0usize;
