@@ -325,3 +325,28 @@ Measured against a real 5472x3648 camera JPEG:
 
 The artifact is smaller than the source JPEG at equivalent canonical resolution.
 The artifact digest is invariant. All compression is lossless.
+
+## Single-File Container
+
+CIF artifacts can be packed into a single distributable file:
+
+    cifv2 pack --artifact capture.cifv2 --out capture.cifv2f
+    cifv2 unpack --file capture.cifv2f --out capture.cifv2
+
+The .cifv2f container is a binary format with an indexed header:
+
+    [0..8]    magic       "CIFV2\x00\x00\x00"
+    [8..12]   version     u32 little-endian = 1
+    [12..16]  n_entries   u32 little-endian
+    [16..]    index       n_entries x 64-byte descriptors
+    [...]     data        concatenated compressed components
+
+Each index entry is 64 bytes: 32-byte null-padded name, u64 offset, u64 length, 16 reserved.
+
+verify, render, and replay accept both directory artifacts and .cifv2f files transparently.
+The artifact digest is invariant between the two forms.
+
+Measured size for a real 5472x3648 JPEG source:
+
+    directory artifact    336KB
+    .cifv2f container     320KB
