@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CIF v2 Viewer</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0a0a0a; color: #e0e0e0; font-family: monospace; height: 100vh; display: flex; flex-direction: column; }
+
+#header {
+  padding: 12px 20px;
+  background: #111;
+  border-bottom: 1px solid #222;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+#header h1 { font-size: 14px; color: #888; font-weight: normal; }
+#header h1 span { color: #fff; }
+#digest { font-size: 11px; color: #444; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#digest.loaded { color: #4a9; }
+#info { font-size: 11px; color: #555; }
+
+#drop-zone {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed #222;
+  margin: 40px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+#drop-zone:hover, #drop-zone.drag-over { border-color: #444; }
+#drop-zone p { color: #333; font-size: 13px; }
+#drop-zone p span { color: #555; }
+
+#viewer { flex: 1; display: none; flex-direction: column; overflow: hidden; }
+#controls {
+  padding: 8px 16px;
+  background: #111;
+  border-bottom: 1px solid #1a1a1a;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+#controls label { font-size: 11px; color: #555; }
+#zoom-slider { width: 200px; accent-color: #4a9; }
+#zoom-val { font-size: 11px; color: #888; min-width: 40px; }
+#render-time { font-size: 11px; color: #444; margin-left: auto; }
+
+#canvas-wrap {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  background: #050505;
+}
+canvas { display: block; image-rendering: pixelated; cursor: crosshair; }
+
+#status { padding: 4px 16px; font-size: 11px; color: #444; background: #0a0a0a; border-top: 1px solid #111; }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <h1><span>CIF</span> v2 Viewer</h1>
+  <div id="digest">drop a .cifv2f file to begin</div>
+  <div id="info"></div>
+</div>
+
+<div id="drop-zone" id="drop">
+  <p>Drop a <span>.cifv2f</span> file here</p>
+  <p style="margin-top:8px;font-size:11px;color:#2a2a2a;">or click to browse</p>
+  <input type="file" id="file-input" accept=".cifv2f" style="display:none">
+</div>
+
+<div id="viewer">
+  <div id="controls">
+    <label>zoom</label>
+    <input type="range" id="zoom-slider" min="1" max="16" step="0.5" value="1">
+    <span id="zoom-val">1×</span>
+    <span id="render-time"></span>
+  </div>
+  <div id="canvas-wrap">
+    <canvas id="canvas"></canvas>
+  </div>
+</div>
+
+<div id="status">ready</div>
+
+<script type="module">
+import init, { load_cifv2f } from './wasm/pkg/cifv2_wasm.js';
+
+await init();
+
+let artifact = null;
+let renderPending = false;
+
+const dropZone = document.getElementById('drop-zone');
+const viewer   = document.getElementById('viewer');
+const canvas   = document.getElementById('canvas');
+const ctx      = canvas.getContext('2d');
+const slider   = document.getElementById('zoom-slider');
+const zoomVal  = document.getElementById('zoom-val');
+const digest   = document.getElementById('digest');
+const info     = document.getElementById('info');
+const status   = document.getElementById('status');
+const rt       = document.getElementById('render-time');
+const fileInput= document.getElementById('file-input');
+
+dropZone.onclick = () => fileInput.click();
+fileInput.onchange = e => loadFile(e.target.files[0]);
+
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+});
+
+async function loadFile(file) {
+  status.textContent = `loading ${file.name}…`;
+  try {
+    const buf = await file.arrayBuffer();
+    const data = new Uint8Array(buf);
+    artifact = load_cifv2f(data);
+    const cw = artifact.canonical_width;
+    const ch = artifact.canonical_height;
+    digest.textContent = artifact.artifact_digest;
+    digest.className = 'loaded';
+    info.textContent = `${cw}×${ch} canonical`;
+    dropZone.style.display = 'none';
+    viewer.style.display = 'flex';
+    status.textContent = `loaded — ${file.name} (${(buf.byteLength/1024).toFixed(1)} KB)`;
+    render();
+  } catch(e) {
+    status.textContent = `error: ${e}`;
+  }
+}
+
+function render() {
+  if (!artifact || renderPending) return;
+  renderPending = true;
+  requestAnimationFrame(() => {
+    const zoom = parseFloat(slider.value);
+    // Cap render size for interactive performance
+    const maxPx = 1024;
+    const rawW = Math.round(artifact.canonical_width * zoom);
+    const rawH = Math.round(artifact.canonical_height * zoom);
+    const scale = Math.min(1, maxPx / Math.max(rawW, rawH));
+    const w = Math.round(rawW * scale);
+    const h = Math.round(rawH * scale);
+    zoomVal.textContent = `${zoom}×`;
+    status.textContent = `rendering ${w}×${h}…`;
+    const t0 = performance.now();
+    const pixels = artifact.render(w, h);
+    const elapsed = (performance.now() - t0).toFixed(0);
+    canvas.width = w;
+    canvas.height = h;
+    const img = new ImageData(new Uint8ClampedArray(pixels), w, h);
+    ctx.putImageData(img, 0, 0);
+    rt.textContent = `${elapsed}ms`;
+    status.textContent = `${w}×${h} — artifact digest invariant at all scales`;
+    renderPending = false;
+  });
+}
+
+slider.oninput = render;
+</script>
+</body>
+</html>
