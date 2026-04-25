@@ -91,6 +91,16 @@ enum Commands {
         #[arg(long)]
         artifact: PathBuf,
     },
+    RdoRender {
+        #[arg(long)]
+        artifact: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long)]
+        width: u32,
+        #[arg(long)]
+        height: u32,
+    },
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -163,6 +173,8 @@ fn main() -> Result<()> {
             crate::rdo::verify::rdo_verify(&artifact).map(|v| {
                 println!("{}", serde_json::to_string_pretty(&v).unwrap());
             }),
+        Commands::RdoRender { artifact, out, width, height } =>
+            crate::rdo::render::rdo_render(&artifact, &out, width, height),
     }
 }
 
