@@ -307,3 +307,21 @@ Replay: identical artifact digest. Render: 4096x4096 projection from full-resolu
 
 The pipeline handles real-world input correctly. Identity is derived from pixel
 data alone. Metadata does not affect the artifact digest.
+
+## Artifact Compression
+
+All binary components are zstd-compressed. JSON edge records are replaced with a binary format.
+
+Measured against a real 5472x3648 camera JPEG:
+
+    canonical_lms.tensor    513KB -> 44KB   (zstd, 11.6x)
+    edges.cifedge           438KB -> 29KB   (binary + zstd, 15x)
+    lambda_real.bin         1.3MB -> 169KB  (zstd, 7.7x)
+    lambda_mod.bin          1.3MB -> 0      (removed, recomputed at verify time)
+    inr.siren                11KB           (Base85, unchanged)
+    preview.png              64KB           (PNG thumbnail, unchanged)
+
+    total: 3.7MB -> 336KB  (-91%)
+
+The artifact is smaller than the source JPEG at equivalent canonical resolution.
+The artifact digest is invariant. All compression is lossless.
