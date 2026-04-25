@@ -156,8 +156,12 @@ fn encode(input: &Path, out: &Path, max_side: u32) -> Result<()> {
     let h_inr = digest_file(&out.join("inr.siren"))?;
 
     let mods = modular_residue(&lambda_q);
-    write_i64_vec(&mods, &out.join("lambda_mod.bin"))?;
-    let h_mod = digest_file(&out.join("lambda_mod.bin"))?;
+    // lambda_mod is validation metadata — digest computed in memory, not written to disk
+    let mut mod_bytes = Vec::new();
+    mod_bytes.extend_from_slice(b"CIFI64\0\0");
+    mod_bytes.extend_from_slice(&(mods.len() as u64).to_le_bytes());
+    for v in &mods { mod_bytes.extend_from_slice(&v.to_le_bytes()); }
+    let h_mod = format!("sha256:{}", sha256_hex(&mod_bytes));
 
     write_preview(&t0, &out.join("preview.png"))?;
     let h_preview = digest_file(&out.join("preview.png"))?;
@@ -204,15 +208,21 @@ fn verify(artifact: &Path) -> Result<serde_json::Value> {
     for (k, d) in &manifest.hashes {
         let file = match k.as_str() {
             "canonical_lms" => "canonical_lms.tensor", "lambda_real" => "lambda_real.bin", "edges" => "edges.cifedge",
-            "procedural" => "procedural.json", "inr" => "inr.siren", "lambda_mod" => "lambda_mod.bin", "preview" => "preview.png", _ => bail!("unknown hash key {k}"),
+            "procedural" => "procedural.json", "inr" => "inr.siren", "preview" => "preview.png", "lambda_mod" => { continue; }, _ => bail!("unknown hash key {k}"),
         };
         let actual = digest_file(&artifact.join(file))?;
         if &actual != d { bail!("digest mismatch for {file}: expected {d}, actual {actual}"); }
     }
     let lambda = read_i64_vec(&artifact.join("lambda_real.bin"))?;
     let expected_mod = modular_residue(&lambda);
-    let actual_mod = read_i64_vec(&artifact.join("lambda_mod.bin"))?;
-    if expected_mod != actual_mod { bail!("lambda_mod.bin does not equal Euclidean lambda_real mod 343"); }
+    // Recompute h_mod from lambda_real in memory — lambda_mod.bin is not stored
+    let mut mod_bytes = Vec::new();
+    mod_bytes.extend_from_slice(b"CIFI64\0\0");
+    mod_bytes.extend_from_slice(&(expected_mod.len() as u64).to_le_bytes());
+    for v in &expected_mod { mod_bytes.extend_from_slice(&v.to_le_bytes()); }
+    let h_mod_actual = format!("sha256:{}", sha256_hex(&mod_bytes));
+    let h_mod_stored = manifest.hashes.get("lambda_mod").ok_or_else(|| anyhow::anyhow!("missing lambda_mod hash"))?;
+    if &h_mod_actual != h_mod_stored { bail!("lambda_mod recomputation mismatch"); }
     let h_manifest = digest_file(&artifact.join("manifest.json"))?;
     if h_manifest != receipt.manifest_digest { bail!("manifest digest mismatch"); }
     let hashes = &manifest.hashes;
