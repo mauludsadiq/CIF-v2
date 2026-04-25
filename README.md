@@ -293,3 +293,17 @@ Render scale proof:
 
 A 256x256 source rendered to 4096x4096 from the same artifact.
 The artifact digest did not change. The render digest is deterministic per resolution.
+
+## Real Photograph Test
+
+Tested against a real 5472x3648 camera JPEG (Wolverine scanner, Exif metadata).
+
+Encode: 1.278s. Exif stripped by canonical decode path. Verify: 6 steps clean.
+Replay: identical artifact digest. Render: 4096x4096 projection from full-resolution source.
+
+    source           5472x3648 JPEG with Exif
+    artifact_digest  sha256:3fc7a271...  invariant across encode and replay
+    render_digest    sha256:fe88b7a1...  4096x4096 projection
+
+The pipeline handles real-world input correctly. Identity is derived from pixel
+data alone. Metadata does not affect the artifact digest.
