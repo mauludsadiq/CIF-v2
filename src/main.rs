@@ -256,7 +256,7 @@ fn unpack_silent(file: &Path, out: &Path) -> Result<()> {
     Ok(())
 }
 
-fn resolve_artifact(path: &Path) -> Result<std::borrow::Cow<Path>> {
+fn resolve_artifact(path: &Path) -> Result<std::borrow::Cow<'_, Path>> {
     if path.is_dir() {
         return Ok(std::borrow::Cow::Borrowed(path));
     }
