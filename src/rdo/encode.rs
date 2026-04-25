@@ -10,6 +10,7 @@ use crate::rdo::types::{LmsTile, RegionEncoder, Weights, FIX_SCALE, TILE_SIZE};
 use crate::rdo::encoders::constant::ConstantLms;
 use crate::rdo::encoders::affine::AffineLms;
 use crate::rdo::encoders::quadratic::QuadraticLms;
+use crate::rdo::encoders::wavelet::WaveletTile;
 use crate::rdo::select::{select_encoder, Selection};
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -75,6 +76,7 @@ pub fn rdo_encode(input: &Path, out: &Path, tile_size: u32, quality: f64) -> Res
         Box::new(ConstantLms),
         Box::new(AffineLms),
         Box::new(QuadraticLms),
+        Box::new(WaveletTile),
     ];
 
     let quality_lambda = (quality * FIX_SCALE as f64).round() as i64;
