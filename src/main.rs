@@ -20,8 +20,8 @@ const MODULUS: i64 = 343;
 const TILE: usize = 32;
 const SIREN_WIDTH: usize = 32;
 const SIREN_LAYERS: usize = 3;
-const SIREN_STEPS: usize = 256;
-const SIREN_LR: f32 = 1e-4;
+const SIREN_STEPS: usize = 64;
+const SIREN_LR: f32 = 1e-3;
 
 #[derive(Parser, Debug)]
 #[command(name = "cifv2")]
@@ -513,15 +513,168 @@ fn siren_eval(x: f32, y: f32, weights: &[f32], arch: &SirenArch) -> [f32; 3] {
 fn neural_residual(t:&Tensor,_lambda:&[i64],_edges:&[EdgeSegment],_proc:&Procedural,h_input:&str,h_lambda:&str,h_edges:&str,h_proc:&str)->SirenFile{
     let seed = sha256_hex(format!("{}{}{}{}SIREN_INIT", h_input,h_lambda,h_edges,h_proc).as_bytes());
     let mut rng = DetRng::from_hex(&seed);
-    let mut weights = Vec::<f32>::new();
-    let layers = [(2usize,SIREN_WIDTH),(SIREN_WIDTH,SIREN_WIDTH),(SIREN_WIDTH,SIREN_WIDTH),(SIREN_WIDTH,3usize)];
-    for (inp,out) in layers { for _ in 0..(inp*out+out) { weights.push((rng.next_f32()*2.0-1.0)*0.05); } }
-    // Deterministic lightweight residual fit: adjust output biases to mean LMS residual. This is real parameter fitting and replay-stable.
-    let mean = t.data.iter().fold([0.0;3], |mut a,p| {a[0]+=p[0];a[1]+=p[1];a[2]+=p[2];a}) ;
-    let n=t.data.len().max(1) as f32; let mean=[mean[0]/n,mean[1]/n,mean[2]/n];
-    let len=weights.len(); if len>=3 { weights[len-3]=mean[0]*SIREN_LR*SIREN_STEPS as f32; weights[len-2]=mean[1]*SIREN_LR*SIREN_STEPS as f32; weights[len-1]=mean[2]*SIREN_LR*SIREN_STEPS as f32; }
-    let mut bytes=Vec::new(); for v in weights { bytes.write_f32::<LittleEndian>(v).unwrap(); }
-    SirenFile{ architecture:SirenArch{input:2,output:3,hidden_layers:SIREN_LAYERS,hidden_width:SIREN_WIDTH,activation:"sin".into(),omega0:30.0,steps:SIREN_STEPS,learning_rate:SIREN_LR}, weights_b85: base85::encode(&bytes) }
+
+    // Weight layout: [W0(hw×2)+b0(hw), W1(hw×hw)+b1(hw), W2(hw×hw)+b2(hw), Wout(3×hw)+bout(3)]
+    const INP: usize = 2;
+    const OUT: usize = 3;
+    let hw = SIREN_WIDTH;
+    let layer_sizes: &[(usize,usize)] = &[(hw,INP),(hw,hw),(hw,hw),(OUT,hw)];
+    let n_weights: usize = layer_sizes.iter().map(|(r,c)| r*c+r).sum();
+
+    // SIREN init: W0 ~ U[-1/in, 1/in], hidden ~ U[-sqrt(6/in)/omega, sqrt(6/in)/omega]
+    let mut weights = vec![0.0f32; n_weights];
+    let mut off = 0usize;
+    for (li, &(rows, cols)) in layer_sizes.iter().enumerate() {
+        let scale = if li == 0 {
+            1.0 / cols as f32
+        } else {
+            (6.0f32 / cols as f32).sqrt()
+        };
+        for _ in 0..(rows*cols+rows) {
+            weights[off] = (rng.next_f32()*2.0-1.0)*scale;
+            off += 1;
+        }
+    }
+
+    let tw = t.width as f32;
+    let th = t.height as f32;
+    let n_px = t.data.len();
+
+    // Mini-batch SGD: 128 pixels per step, deterministic pixel order from seed
+    const BATCH: usize = 64;
+    let mut pixel_rng = DetRng::from_hex(&seed);
+
+    for _step in 0..SIREN_STEPS {
+        let mut grads = vec![0.0f32; n_weights];
+
+        for _b in 0..BATCH {
+            let idx = pixel_rng.next_u64() as usize % n_px;
+            let px = idx % t.width;
+            let py = idx / t.width;
+            let nx = (px as f32 + 0.5) / tw;
+            let ny = (py as f32 + 0.5) / th;
+            let target = t.data[py * t.width + px];
+            let omega = 1.0f32;
+
+            // --- Forward pass ---
+            let mut off = 0usize;
+
+            // Layer 0: z0 = omega*(W0@[nx,ny]+b0), h0=sin(z0)
+            let mut z0 = vec![0.0f32; hw];
+            let input = [nx, ny];
+            for r in 0..hw {
+                let mut s = weights[off + hw*INP + r];
+                for c in 0..INP { s += weights[off + r*INP + c] * input[c]; }
+                z0[r] = omega * s;
+            }
+            let h0: Vec<f32> = z0.iter().map(|v| v.sin()).collect();
+            off += hw*INP + hw;
+
+            // Layer 1: z1 = omega*(W1@h0+b1), h1=sin(z1)
+            let mut z1 = vec![0.0f32; hw];
+            for r in 0..hw {
+                let mut s = weights[off + hw*hw + r];
+                for c in 0..hw { s += weights[off + r*hw + c] * h0[c]; }
+                z1[r] = omega * s;
+            }
+            let h1: Vec<f32> = z1.iter().map(|v| v.sin()).collect();
+            off += hw*hw + hw;
+
+            // Layer 2: z2 = omega*(W2@h1+b2), h2=sin(z2)
+            let mut z2 = vec![0.0f32; hw];
+            for r in 0..hw {
+                let mut s = weights[off + hw*hw + r];
+                for c in 0..hw { s += weights[off + r*hw + c] * h1[c]; }
+                z2[r] = omega * s;
+            }
+            let h2: Vec<f32> = z2.iter().map(|v| v.sin()).collect();
+            off += hw*hw + hw;
+
+            // Output layer: o = Wout@h2 + bout  (linear)
+            let mut o = [0.0f32; OUT];
+            for r in 0..OUT {
+                let mut s = weights[off + OUT*hw + r];
+                for c in 0..hw { s += weights[off + r*hw + c] * h2[c]; }
+                o[r] = s;
+            }
+
+            // --- Loss gradient: dL/do = (2/OUT)(o - target) ---
+            let mut d_o = [0.0f32; OUT];
+            for c in 0..OUT { d_o[c] = (2.0 / OUT as f32) * (o[c] - target[c]); }
+
+            // --- Backward pass ---
+            let mut goff = 0usize;
+
+            // Recompute offsets for grad accumulation
+            let off0 = 0usize;
+            let off1 = hw*INP + hw;
+            let off2 = off1 + hw*hw + hw;
+            let off_out = off2 + hw*hw + hw;
+
+            // Output layer grads
+            for r in 0..OUT {
+                grads[off_out + OUT*hw + r] += d_o[r]; // d_bout
+                for c in 0..hw {
+                    grads[off_out + r*hw + c] += d_o[r] * h2[c]; // d_Wout
+                }
+            }
+
+            // d_h2 = Wout^T @ d_o
+            let mut d_h2 = vec![0.0f32; hw];
+            for c in 0..hw {
+                for r in 0..OUT { d_h2[c] += weights[off_out + r*hw + c] * d_o[r]; }
+            }
+
+            // Layer 2 grads: d_z2 = d_h2 * omega * cos(z2)
+            let mut d_z2 = vec![0.0f32; hw];
+            for j in 0..hw { d_z2[j] = d_h2[j] * omega * z2[j].cos(); }
+            for r in 0..hw {
+                grads[off2 + hw*hw + r] += d_z2[r]; // d_b2
+                for c in 0..hw { grads[off2 + r*hw + c] += d_z2[r] * h1[c]; } // d_W2
+            }
+
+            // d_h1 = W2^T @ d_z2
+            let mut d_h1 = vec![0.0f32; hw];
+            for c in 0..hw {
+                for r in 0..hw { d_h1[c] += weights[off2 + r*hw + c] * d_z2[r]; }
+            }
+
+            // Layer 1 grads: d_z1 = d_h1 * omega * cos(z1)
+            let mut d_z1 = vec![0.0f32; hw];
+            for j in 0..hw { d_z1[j] = d_h1[j] * omega * z1[j].cos(); }
+            for r in 0..hw {
+                grads[off1 + hw*hw + r] += d_z1[r]; // d_b1
+                for c in 0..hw { grads[off1 + r*hw + c] += d_z1[r] * h0[c]; } // d_W1
+            }
+
+            // d_h0 = W1^T @ d_z1
+            let mut d_h0 = vec![0.0f32; hw];
+            for c in 0..hw {
+                for r in 0..hw { d_h0[c] += weights[off1 + r*hw + c] * d_z1[r]; }
+            }
+
+            // Layer 0 grads: d_z0 = d_h0 * omega * cos(z0)
+            let mut d_z0 = vec![0.0f32; hw];
+            for j in 0..hw { d_z0[j] = d_h0[j] * omega * z0[j].cos(); }
+            for r in 0..hw {
+                grads[off0 + hw*INP + r] += d_z0[r]; // d_b0
+                for c in 0..INP { grads[off0 + r*INP + c] += d_z0[r] * input[c]; } // d_W0
+            }
+
+            let _ = goff; // suppress unused warning
+        }
+
+        // SGD update with gradient clipping
+        let scale = SIREN_LR / BATCH as f32;
+        for i in 0..n_weights {
+            let g = (grads[i] * scale).clamp(-0.1, 0.1);
+            weights[i] -= g;
+        }
+    }
+
+    let mut bytes = Vec::new();
+    for v in &weights { bytes.write_f32::<LittleEndian>(*v).unwrap(); }
+    SirenFile{ architecture:SirenArch{input:2,output:3,hidden_layers:SIREN_LAYERS,hidden_width:SIREN_WIDTH,activation:"sin".into(),omega0:1.0,steps:SIREN_STEPS,learning_rate:SIREN_LR}, weights_b85: base85::encode(&bytes) }
 }
 struct DetRng{state:u64} impl DetRng{fn from_hex(s:&str)->Self{let mut st=0u64; for b in s.as_bytes().iter().take(16){st=st.wrapping_mul(131).wrapping_add(*b as u64);} Self{state:st|1}} fn next_u64(&mut self)->u64{self.state^=self.state<<7; self.state^=self.state>>9; self.state=self.state.wrapping_mul(6364136223846793005).wrapping_add(1); self.state} fn next_f32(&mut self)->f32{(self.next_u64() as f64/u64::MAX as f64) as f32}}
 
