@@ -603,7 +603,7 @@ fn neural_residual(t:&Tensor,_lambda:&[i64],_edges:&[EdgeSegment],_proc:&Procedu
             for c in 0..OUT { d_o[c] = (2.0 / OUT as f32) * (o[c] - target[c]); }
 
             // --- Backward pass ---
-            let mut goff = 0usize;
+            let goff = 0usize;
 
             // Recompute offsets for grad accumulation
             let off0 = 0usize;
