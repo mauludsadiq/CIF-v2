@@ -360,3 +360,31 @@ At quality=10.0, distortion cost dominates. affine_lms wins on gradients.
 quadratic_lms activates only when it reduces distortion enough to justify 1152 bits over 576.
 
 This is the correct behavior of a J-minimizer under the stated objective.
+
+## CIF-RDO v0 — Encoder Results
+
+Four encoders are implemented and content-adaptive selection is proven.
+
+### Encoder behavior by content type
+
+Smooth gradients (quality=1.0):
+
+    constant_lms    34 tiles  (53.1%)
+    affine_lms      30 tiles  (46.9%)
+    wavelet_tile     0 tiles  (0.0%)
+
+High-frequency checkerboard (quality=1.0):
+
+    wavelet_tile    64 tiles  (100.0%)
+
+The solver selects the right encoder for each tile without any heuristics.
+constant wins on flat regions because its 96-bit rate cost is unbeatable.
+affine wins on gradients because it fits them at 576 bits with low distortion.
+wavelet wins on high-frequency content because detail subbands capture it efficiently.
+quadratic activates only at high quality lambda where distortion cost dominates rate cost.
+
+### Wavelet encoder
+
+Single-level 2D Haar transform per channel on each 32x32 tile.
+Coefficients quantized and zero-RLE encoded. Variable payload length.
+rate_bits = payload length * 8.
