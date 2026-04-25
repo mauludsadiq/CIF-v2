@@ -26,7 +26,7 @@
     {
       "name": "neural_residual",
       "output": "inr.siren",
-      "digest": "sha256:3bc35e17ac651d75ced801d1ae6af84782a656c1633c6b1f9eea6318ec6ac445"
+      "digest": "sha256:dffcda10c3d43b3b0d54d7f1e45df37f9f092e4b3338ccc1186a68dae7ae64fb"
     },
     {
       "name": "modular_residue",
@@ -34,6 +34,6 @@
       "digest": "sha256:702a2d5b294146129cb15b7a08cb4223904bc9b67ba6306034e919dfb36505bf"
     }
   ],
-  "manifest_digest": "sha256:a05aa3c2b0fd9671b5cfd1a130efdc81186e37d1127eb1dab466f31641d22fd0",
-  "artifact_digest": "sha256:80569a9a425ce9b86a54b3e976eee751e2b46b438f8c5ab7664054acf5f68a59"
+  "manifest_digest": "sha256:c821472b9cd5be8cea41c47cc13210d86ee40edb9612758f3b48041de4dd3c0f",
+  "artifact_digest": "sha256:e921f95f9c9974d54b4773a8feb69de5f7f05f839881e254db3f5e2338097a2a"
 }
