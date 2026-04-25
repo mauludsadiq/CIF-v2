@@ -64,6 +64,18 @@ enum Commands {
         #[arg(long)]
         height: u32,
     },
+    Pack {
+        #[arg(long)]
+        artifact: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    Unpack {
+        #[arg(long)]
+        file: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -128,7 +140,145 @@ fn main() -> Result<()> {
         Commands::Verify { artifact } => verify(&artifact).map(|d| { println!("{}", serde_json::to_string_pretty(&d).unwrap()); }),
         Commands::Replay { input, artifact, temp_out, max_side } => replay(&input, &artifact, &temp_out, max_side),
         Commands::Render { artifact, out, width, height } => render(&artifact, &out, width, height),
+        Commands::Pack { artifact, out } => pack(&artifact, &out),
+        Commands::Unpack { file, out } => unpack(&file, &out),
     }
+}
+
+const CIFV2_MAGIC: &[u8; 8] = b"CIFV2\0\0\0";
+const CIFV2_VERSION: u32 = 1;
+const COMPONENT_ORDER: &[&str] = &[
+    "manifest.json", "receipt.json", "canonical_lms.tensor",
+    "lambda_real.bin", "edges.cifedge", "procedural.json",
+    "inr.siren", "preview.png",
+];
+
+fn pack(artifact: &Path, out: &Path) -> Result<()> {
+    // Read all components
+    let mut components: Vec<(String, Vec<u8>)> = Vec::new();
+    for name in COMPONENT_ORDER {
+        let path = artifact.join(name);
+        if path.exists() {
+            components.push((name.to_string(), fs::read(&path)?));
+        }
+    }
+
+    let n = components.len() as u32;
+    let index_size = n as u64 * 64;
+    let header_size = 8 + 4 + 4 + index_size; // magic + version + n_entries + index
+
+    // Compute offsets
+    let mut offset = header_size;
+    let mut offsets = Vec::new();
+    for (_, data) in &components {
+        offsets.push(offset);
+        offset += data.len() as u64;
+    }
+
+    // Write file
+    let mut buf = Vec::new();
+    buf.extend_from_slice(CIFV2_MAGIC);
+    buf.extend_from_slice(&CIFV2_VERSION.to_le_bytes());
+    buf.extend_from_slice(&n.to_le_bytes());
+
+    // Index entries (64 bytes each): 32 name + 8 offset + 8 length + 16 reserved
+    for ((name, data), &off) in components.iter().zip(offsets.iter()) {
+        let mut entry = [0u8; 64];
+        let nb = name.as_bytes();
+        entry[..nb.len().min(32)].copy_from_slice(&nb[..nb.len().min(32)]);
+        entry[32..40].copy_from_slice(&off.to_le_bytes());
+        entry[40..48].copy_from_slice(&(data.len() as u64).to_le_bytes());
+        buf.extend_from_slice(&entry);
+    }
+
+    // Data blobs
+    for (_, data) in &components {
+        buf.extend_from_slice(data);
+    }
+
+    fs::write(out, &buf)?;
+    let digest = format!("sha256:{}", sha256_hex(&buf));
+    println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+        "ok": true,
+        "out": out.to_string_lossy(),
+        "components": n,
+        "size_bytes": buf.len(),
+        "file_digest": digest
+    })).unwrap());
+    Ok(())
+}
+
+fn unpack(file: &Path, out: &Path) -> Result<()> {
+    let buf = fs::read(file)?;
+    if &buf[0..8] != CIFV2_MAGIC { bail!("not a .cifv2 container file"); }
+    let version = u32::from_le_bytes(buf[8..12].try_into().unwrap());
+    if version != CIFV2_VERSION { bail!("unsupported container version {version}"); }
+    let n = u32::from_le_bytes(buf[12..16].try_into().unwrap()) as usize;
+
+    fs::create_dir_all(out)?;
+
+    let mut pos = 16usize;
+    for _ in 0..n {
+        let entry = &buf[pos..pos+64];
+        let name_end = entry[..32].iter().position(|&b| b == 0).unwrap_or(32);
+        let name = std::str::from_utf8(&entry[..name_end])?.to_string();
+        let offset = u64::from_le_bytes(entry[32..40].try_into().unwrap()) as usize;
+        let length = u64::from_le_bytes(entry[40..48].try_into().unwrap()) as usize;
+        fs::write(out.join(&name), &buf[offset..offset+length])?;
+        pos += 64;
+    }
+
+    println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+        "ok": true,
+        "out": out.to_string_lossy(),
+        "components": n
+    })).unwrap());
+    Ok(())
+}
+
+fn unpack_silent(file: &Path, out: &Path) -> Result<()> {
+    let buf = fs::read(file)?;
+    if &buf[0..8] != CIFV2_MAGIC { bail!("not a .cifv2 container file"); }
+    let version = u32::from_le_bytes(buf[8..12].try_into().unwrap());
+    if version != CIFV2_VERSION { bail!("unsupported container version {version}"); }
+    let n = u32::from_le_bytes(buf[12..16].try_into().unwrap()) as usize;
+    fs::create_dir_all(out)?;
+    let mut pos = 16usize;
+    for _ in 0..n {
+        let entry = &buf[pos..pos+64];
+        let name_end = entry[..32].iter().position(|&b| b == 0).unwrap_or(32);
+        let name = std::str::from_utf8(&entry[..name_end])?.to_string();
+        let offset = u64::from_le_bytes(entry[32..40].try_into().unwrap()) as usize;
+        let length = u64::from_le_bytes(entry[40..48].try_into().unwrap()) as usize;
+        fs::write(out.join(&name), &buf[offset..offset+length])?;
+        pos += 64;
+    }
+    Ok(())
+}
+
+fn resolve_artifact(path: &Path) -> Result<std::borrow::Cow<Path>> {
+    if path.is_dir() {
+        return Ok(std::borrow::Cow::Borrowed(path));
+    }
+    // Check magic bytes for single-file container
+    if path.is_file() {
+        let magic = {
+            let mut f = std::fs::File::open(path)?;
+            let mut m = [0u8; 8];
+            std::io::Read::read_exact(&mut f, &mut m).ok();
+            m
+        };
+        if &magic == CIFV2_MAGIC {
+            let tmp = std::env::temp_dir().join(
+                format!("cifv2_unpack_{}", sha256_hex(path.to_string_lossy().as_bytes()))
+            );
+            if !tmp.exists() {
+                unpack_silent(path, &tmp)?;
+            }
+            return Ok(std::borrow::Cow::Owned(tmp));
+        }
+    }
+    bail!("artifact path is neither a directory nor a .cifv2 container: {}", path.display())
 }
 
 fn encode(input: &Path, out: &Path, max_side: u32) -> Result<()> {
@@ -199,7 +349,9 @@ fn encode(input: &Path, out: &Path, max_side: u32) -> Result<()> {
     Ok(())
 }
 
-fn verify(artifact: &Path) -> Result<serde_json::Value> {
+fn verify(artifact_path: &Path) -> Result<serde_json::Value> {
+    let artifact_cow = resolve_artifact(artifact_path)?;
+    let artifact = artifact_cow.as_ref();
     let manifest: Manifest = read_json(&artifact.join("manifest.json"))?;
     let receipt: Receipt = read_json(&artifact.join("receipt.json"))?;
     if manifest.format != FORMAT { bail!("format mismatch"); }
@@ -233,7 +385,9 @@ fn verify(artifact: &Path) -> Result<serde_json::Value> {
     Ok(serde_json::json!({"ok":true,"artifact_digest":ad,"steps_verified":receipt.steps.len()}))
 }
 
-fn replay(input: &Path, artifact: &Path, temp_out: &Path, max_side: u32) -> Result<()> {
+fn replay(input: &Path, artifact_path: &Path, temp_out: &Path, max_side: u32) -> Result<()> {
+    let artifact_cow = resolve_artifact(artifact_path)?;
+    let artifact = artifact_cow.as_ref();
     let old: Receipt = read_json(&artifact.join("receipt.json"))?;
     encode(input, temp_out, max_side)?;
     let new: Receipt = read_json(&temp_out.join("receipt.json"))?;
@@ -244,7 +398,9 @@ fn replay(input: &Path, artifact: &Path, temp_out: &Path, max_side: u32) -> Resu
     Ok(())
 }
 
-fn render(artifact: &Path, out: &Path, width: u32, height: u32) -> Result<()> {
+fn render(artifact_path: &Path, out: &Path, width: u32, height: u32) -> Result<()> {
+    let artifact_cow = resolve_artifact(artifact_path)?;
+    let artifact = artifact_cow.as_ref();
     let receipt: Receipt = read_json(&artifact.join("receipt.json"))?;
     let artifact_digest = receipt.artifact_digest.clone();
 
