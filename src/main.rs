@@ -241,6 +241,12 @@ fn render(artifact: &Path, out: &Path, width: u32, height: u32) -> Result<()> {
 
     let t = read_tensor(&artifact.join("canonical_lms.tensor"))?;
     let edges: Vec<EdgeSegment> = read_json(&artifact.join("edges.cifedge"))?;
+    let siren_file: SirenFile = read_json(&artifact.join("inr.siren"))?;
+    let siren_arch = siren_file.architecture.clone();
+    let siren_raw = base85::decode(&siren_file.weights_b85).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let siren_weights: Vec<f32> = siren_raw.chunks_exact(4)
+        .map(|b| f32::from_le_bytes([b[0],b[1],b[2],b[3]]))
+        .collect();
 
     const SCALE: f32 = 1_000_000.0;
     let cw = t.width as f32;
@@ -341,6 +347,14 @@ fn render(artifact: &Path, out: &Path, width: u32, height: u32) -> Result<()> {
                     lms[2] += influence * 0.1;
                 }
             }
+
+            // SIREN residual
+            let nx = (px as f32 + 0.5) / ow;
+            let ny = (py as f32 + 0.5) / oh;
+            let siren_delta = siren_eval(nx, ny, &siren_weights, &siren_arch);
+            lms[0] += siren_delta[0];
+            lms[1] += siren_delta[1];
+            lms[2] += siren_delta[2];
 
             let rgb = lms_to_srgb(lms);
             img.put_pixel(px as u32, py as u32, Rgba([rgb[0], rgb[1], rgb[2], 255]));
@@ -452,6 +466,48 @@ fn procedural_residual(t:&Tensor, _lambda:&[i64], edges:&[EdgeSegment], h_input:
         }
     }}
     Procedural{tile_size:TILE,tiles}
+}
+
+fn siren_eval(x: f32, y: f32, weights: &[f32], arch: &SirenArch) -> [f32; 3] {
+    let hw = arch.hidden_width;
+    let inp = arch.input;
+    let out = arch.output;
+    let omega = arch.omega0;
+
+    // Layer sizes: [(inp,hw), (hw,hw) × (hl-1), (hw,out)]
+    // Each layer: W[out×in] row-major, then b[out]
+    let mut offset = 0usize;
+
+    // Read weight matrix and bias, apply linear transform
+    let linear = |w: &[f32], off: &mut usize, rows: usize, cols: usize, x: &[f32]| -> Vec<f32> {
+        let mut out = vec![0.0f32; rows];
+        for r in 0..rows {
+            let mut s = w[*off + rows * cols + r]; // bias
+            for c in 0..cols { s += w[*off + r * cols + c] * x[c]; }
+            out[r] = s;
+        }
+        *off += rows * cols + rows;
+        out
+    };
+
+    // Input layer: sin(omega * (W0 x + b0))
+    let mut h: Vec<f32> = {
+        let mut v = linear(weights, &mut offset, hw, inp, &[x, y]);
+        for val in v.iter_mut() { *val = (omega * *val).sin(); }
+        v
+    };
+
+    // Hidden layers (hl-1 times): sin(omega * (Wi h + bi))
+    for _ in 0..(arch.hidden_layers - 1) {
+        let prev = h.clone();
+        h = linear(weights, &mut offset, hw, hw, &prev);
+        for val in h.iter_mut() { *val = (omega * *val).sin(); }
+    }
+
+    // Output layer: linear (no activation)
+    let prev = h.clone();
+    let o = linear(weights, &mut offset, out, hw, &prev);
+    [o[0], o[1], o[2]]
 }
 
 fn neural_residual(t:&Tensor,_lambda:&[i64],_edges:&[EdgeSegment],_proc:&Procedural,h_input:&str,h_lambda:&str,h_edges:&str,h_proc:&str)->SirenFile{
