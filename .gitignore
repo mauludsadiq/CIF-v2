@@ -4,3 +4,9 @@ render*.png
 render*.projection.json
 test.png
 test_edges.png
+
+test_photo.png
+render_*.png
+render_*.projection.json
+capture_*.cifv2/
+test_edges.png
