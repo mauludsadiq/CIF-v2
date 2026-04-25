@@ -332,3 +332,31 @@ The solver activates higher-cost encoders only when distortion savings justify t
 ### Core Invariant
 
     same input + same quality_lambda = same artifact_digest
+
+## CIF-RDO v0 — Current Status
+
+rdo-encode, rdo-verify, and rdo-render are all working end-to-end.
+
+### Validated results
+
+Encoded bench/inputs/natural_scene.png (256x256) at quality=1.0:
+
+    artifact_digest  sha256:cdefd8e6...  invariant across all renders
+    render_digest    sha256:a3db5d5f...  256x256
+    render_digest    sha256:c9f3f719...  1024x1024
+
+rdo-verify confirms 64/64 region payload digests and the full digest chain.
+
+### CLI summary
+
+    cifv2 rdo-encode --input photo.jpg --out photo.cifrdo --tile 32 --quality 1.0
+    cifv2 rdo-verify --artifact photo.cifrdo
+    cifv2 rdo-render --artifact photo.cifrdo --out render.png --width 1024 --height 1024
+
+### What the solver is doing
+
+At quality=1.0, rate cost dominates. constant_lms wins on flat regions.
+At quality=10.0, distortion cost dominates. affine_lms wins on gradients.
+quadratic_lms activates only when it reduces distortion enough to justify 1152 bits over 576.
+
+This is the correct behavior of a J-minimizer under the stated objective.
