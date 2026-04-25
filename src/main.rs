@@ -236,6 +236,8 @@ fn replay(input: &Path, artifact: &Path, temp_out: &Path, max_side: u32) -> Resu
 }
 
 fn render(artifact: &Path, out: &Path, width: u32, height: u32) -> Result<()> {
+    let verified = verify(artifact)?;
+    let artifact_digest = verified["artifact_digest"].as_str().unwrap_or("").to_string();
     let t = read_tensor(&artifact.join("canonical_lms.tensor"))?;
     let mut img: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::new(width, height);
     for y in 0..height as usize {
@@ -247,7 +249,19 @@ fn render(artifact: &Path, out: &Path, width: u32, height: u32) -> Result<()> {
         }
     }
     img.save(out)?;
-    println!("{}", serde_json::to_string_pretty(&serde_json::json!({"ok":true,"out":out})).unwrap());
+    let render_digest = digest_file(out)?;
+    let projection_receipt = serde_json::json!({
+        "artifact_digest": artifact_digest,
+        "projection": {
+            "width": width,
+            "height": height,
+            "out": out.to_string_lossy(),
+            "render_digest": render_digest
+        }
+    });
+    let receipt_path = out.with_extension("projection.json");
+    write_json(&projection_receipt, &receipt_path)?;
+    println!("{}", serde_json::to_string_pretty(&serde_json::json!({"ok":true,"out":out,"projection_receipt":receipt_path})).unwrap());
     Ok(())
 }
 
