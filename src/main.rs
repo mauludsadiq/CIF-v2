@@ -6,8 +6,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
-use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::fs;
 use std::path::{Path, PathBuf};
 
 const OPERATOR: &str = "Phi-CIFv2-1.0.0";
@@ -758,8 +757,8 @@ fn read_tensor_zstd(path: &Path) -> Result<Tensor> {
     Ok(Tensor { width: w, height: h, data })
 }
 
-fn write_tensor(t:&Tensor,path:&Path)->Result<()> { let mut f=File::create(path)?; f.write_all(b"CIFLMS1\0")?; f.write_u32::<LittleEndian>(t.width as u32)?; f.write_u32::<LittleEndian>(t.height as u32)?; for p in &t.data { for c in p { f.write_f32::<LittleEndian>(*c)?; }} Ok(()) }
-fn read_tensor(path:&Path)->Result<Tensor>{let mut b=Vec::new();File::open(path)?.read_to_end(&mut b)?; if &b[0..8]!=b"CIFLMS1\0"{bail!("bad tensor magic")} let w=u32::from_le_bytes(b[8..12].try_into().unwrap()) as usize; let h=u32::from_le_bytes(b[12..16].try_into().unwrap()) as usize; let mut data=Vec::new(); let mut i=16; while i+12<=b.len(){data.push([f32::from_le_bytes(b[i..i+4].try_into().unwrap()),f32::from_le_bytes(b[i+4..i+8].try_into().unwrap()),f32::from_le_bytes(b[i+8..i+12].try_into().unwrap())]); i+=12;} Ok(Tensor{width:w,height:h,data})}
+
+
 fn write_i64_vec_zstd(v: &[i64], path: &Path) -> Result<()> {
     let mut raw = Vec::new();
     raw.extend_from_slice(b"CIFI64\0\0");
@@ -784,8 +783,8 @@ fn read_i64_vec_zstd(path: &Path) -> Result<Vec<i64>> {
     Ok(v)
 }
 
-fn write_i64_vec(v:&[i64],path:&Path)->Result<()> { let mut f=File::create(path)?; f.write_all(b"CIFI64\0\0")?; f.write_u64::<LittleEndian>(v.len() as u64)?; for x in v { f.write_i64::<LittleEndian>(*x)?; } Ok(()) }
-fn read_i64_vec(path:&Path)->Result<Vec<i64>> { let mut b=Vec::new(); File::open(path)?.read_to_end(&mut b)?; if &b[0..8]!=b"CIFI64\0\0"{bail!("bad i64 magic")} let n=u64::from_le_bytes(b[8..16].try_into().unwrap()) as usize; let mut v=Vec::with_capacity(n); let mut i=16; for _ in 0..n { v.push(i64::from_le_bytes(b[i..i+8].try_into().unwrap())); i+=8; } Ok(v) }
+
+
 fn write_json<T:Serialize>(v:&T,path:&Path)->Result<()> { let s=serde_json::to_string_pretty(v)?; fs::write(path, format!("{}\n", s))?; Ok(()) }
 fn read_json<T:for<'a> Deserialize<'a>>(path:&Path)->Result<T>{Ok(serde_json::from_slice(&fs::read(path)?)?)}
 fn write_preview(t:&Tensor,path:&Path)->Result<()> { let mut img:ImageBuffer<Rgba<u8>,Vec<u8>>=ImageBuffer::new(t.width as u32,t.height as u32); for y in 0..t.height {for x in 0..t.width{let rgb=lms_to_srgb(t.data[y*t.width+x]); img.put_pixel(x as u32,y as u32,Rgba([rgb[0],rgb[1],rgb[2],255]));}} img.save(path)?; Ok(()) }
