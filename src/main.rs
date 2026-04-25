@@ -136,7 +136,7 @@ fn encode(input: &Path, out: &Path, max_side: u32) -> Result<()> {
     if out.exists() { fs::remove_dir_all(out).context("remove existing output directory")?; }
     fs::create_dir_all(out)?;
     let t0 = canonicalize_input(input, max_side)?;
-    write_tensor(&t0, &out.join("canonical_lms.tensor"))?;
+    write_tensor_zstd(&t0, &out.join("canonical_lms.tensor"))?;
     let h_input = digest_file(&out.join("canonical_lms.tensor"))?;
 
     let lambda_q = wavelet_anchor(&t0);
@@ -249,7 +249,7 @@ fn render(artifact: &Path, out: &Path, width: u32, height: u32) -> Result<()> {
     let receipt: Receipt = read_json(&artifact.join("receipt.json"))?;
     let artifact_digest = receipt.artifact_digest.clone();
 
-    let t = read_tensor(&artifact.join("canonical_lms.tensor"))?;
+    let t = read_tensor_zstd(&artifact.join("canonical_lms.tensor"))?;
     let edges: Vec<EdgeSegment> = read_edges_bin(&artifact.join("edges.cifedge"))?;
     let siren_file: SirenFile = read_json(&artifact.join("inr.siren"))?;
     let siren_arch = siren_file.architecture.clone();
@@ -725,6 +725,38 @@ fn neural_residual(t:&Tensor,_lambda:&[i64],_edges:&[EdgeSegment],_proc:&Procedu
 struct DetRng{state:u64} impl DetRng{fn from_hex(s:&str)->Self{let mut st=0u64; for b in s.as_bytes().iter().take(16){st=st.wrapping_mul(131).wrapping_add(*b as u64);} Self{state:st|1}} fn next_u64(&mut self)->u64{self.state^=self.state<<7; self.state^=self.state>>9; self.state=self.state.wrapping_mul(6364136223846793005).wrapping_add(1); self.state} fn next_f32(&mut self)->f32{(self.next_u64() as f64/u64::MAX as f64) as f32}}
 
 fn modular_residue(v:&[i64])->Vec<i64>{v.iter().map(|x|((x%MODULUS)+MODULUS)%MODULUS).collect()}
+
+fn write_tensor_zstd(t: &Tensor, path: &Path) -> Result<()> {
+    let mut buf = Vec::with_capacity(16 + t.data.len() * 12);
+    buf.extend_from_slice(b"CIFLMS1\0");
+    buf.extend_from_slice(&(t.width as u32).to_le_bytes());
+    buf.extend_from_slice(&(t.height as u32).to_le_bytes());
+    for p in &t.data {
+        for c in p { buf.extend_from_slice(&c.to_le_bytes()); }
+    }
+    let compressed = zstd::encode_all(buf.as_slice(), 3)?;
+    fs::write(path, compressed)?;
+    Ok(())
+}
+
+fn read_tensor_zstd(path: &Path) -> Result<Tensor> {
+    let compressed = fs::read(path)?;
+    let b = zstd::decode_all(compressed.as_slice())?;
+    if &b[0..8] != b"CIFLMS1\0" { bail!("bad tensor magic"); }
+    let w = u32::from_le_bytes(b[8..12].try_into().unwrap()) as usize;
+    let h = u32::from_le_bytes(b[12..16].try_into().unwrap()) as usize;
+    let mut data = Vec::with_capacity(w*h);
+    let mut i = 16;
+    while i + 12 <= b.len() {
+        data.push([
+            f32::from_le_bytes(b[i..i+4].try_into().unwrap()),
+            f32::from_le_bytes(b[i+4..i+8].try_into().unwrap()),
+            f32::from_le_bytes(b[i+8..i+12].try_into().unwrap()),
+        ]);
+        i += 12;
+    }
+    Ok(Tensor { width: w, height: h, data })
+}
 
 fn write_tensor(t:&Tensor,path:&Path)->Result<()> { let mut f=File::create(path)?; f.write_all(b"CIFLMS1\0")?; f.write_u32::<LittleEndian>(t.width as u32)?; f.write_u32::<LittleEndian>(t.height as u32)?; for p in &t.data { for c in p { f.write_f32::<LittleEndian>(*c)?; }} Ok(()) }
 fn read_tensor(path:&Path)->Result<Tensor>{let mut b=Vec::new();File::open(path)?.read_to_end(&mut b)?; if &b[0..8]!=b"CIFLMS1\0"{bail!("bad tensor magic")} let w=u32::from_le_bytes(b[8..12].try_into().unwrap()) as usize; let h=u32::from_le_bytes(b[12..16].try_into().unwrap()) as usize; let mut data=Vec::new(); let mut i=16; while i+12<=b.len(){data.push([f32::from_le_bytes(b[i..i+4].try_into().unwrap()),f32::from_le_bytes(b[i+4..i+8].try_into().unwrap()),f32::from_le_bytes(b[i+8..i+12].try_into().unwrap())]); i+=12;} Ok(Tensor{width:w,height:h,data})}
