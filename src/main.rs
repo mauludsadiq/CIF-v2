@@ -1,3 +1,4 @@
+mod rdo;
 use anyhow::{bail, Context, Result};
 use byteorder::{LittleEndian, WriteBytesExt};
 use clap::{Parser, Subcommand};
@@ -76,6 +77,20 @@ enum Commands {
         #[arg(long)]
         out: PathBuf,
     },
+    RdoEncode {
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long, default_value_t = 32)]
+        tile: u32,
+        #[arg(long, default_value_t = 1.0)]
+        quality: f64,
+    },
+    RdoVerify {
+        #[arg(long)]
+        artifact: PathBuf,
+    },
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -142,6 +157,12 @@ fn main() -> Result<()> {
         Commands::Render { artifact, out, width, height } => render(&artifact, &out, width, height),
         Commands::Pack { artifact, out } => pack(&artifact, &out),
         Commands::Unpack { file, out } => unpack(&file, &out),
+        Commands::RdoEncode { input, out, tile, quality } =>
+            crate::rdo::encode::rdo_encode(&input, &out, tile, quality),
+        Commands::RdoVerify { artifact } =>
+            crate::rdo::verify::rdo_verify(&artifact).map(|v| {
+                println!("{}", serde_json::to_string_pretty(&v).unwrap());
+            }),
     }
 }
 
