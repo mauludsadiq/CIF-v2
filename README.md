@@ -252,3 +252,30 @@ The artifact digest is invariant across all render resolutions. Each render dige
 ```
 
 Runs: build → test → encode → verify → render (256 / 1024 / 4096) → replay → invariance check. All stages must pass. The artifact digest must be stable across encode and replay.
+## Browser Viewer
+
+CIF v2 includes a browser-based viewer that runs entirely in WebAssembly — no server, no install.
+
+    open viewer.html in any modern browser
+    drop a .cifv2f file onto the viewer
+    drag the zoom slider from 1x to 16x
+
+The artifact digest is displayed in the header and remains identical at every zoom level.
+This is the core property: the image identity does not change with render resolution.
+
+The WASM renderer (134KB) implements the full read path:
+
+    unpack .cifv2f container
+    decompress canonical_lms.tensor (ruzstd, pure Rust)
+    bilinear sample at target resolution
+    lms_to_srgb conversion
+
+Build the WASM package:
+
+    cd wasm
+    wasm-pack build --target web --release
+
+Serve locally:
+
+    python3 -m http.server 8081
+    open http://localhost:8081/viewer.html
