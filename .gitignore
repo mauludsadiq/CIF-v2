@@ -1,4 +1,6 @@
 target/
 *.cifv2/
-render.png
-replay_tmp.cifv2/
+render*.png
+render*.projection.json
+test.png
+test_edges.png
