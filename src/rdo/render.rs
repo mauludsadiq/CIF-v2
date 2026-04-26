@@ -36,7 +36,7 @@ fn get_encoder(name: &str) -> Box<dyn RegionEncoder> {
         "constant_lms"  => Box::new(ConstantLms),
         "affine_lms"    => Box::new(AffineLms),
         "quadratic_lms" => Box::new(QuadraticLms),
-        "wavelet_tile"  => Box::new(WaveletTile),
+        "wavelet_tile"  => Box::new(WaveletTile::new(1)),
         "edge_tile"     => Box::new(EdgeTile),
         "micro_siren_tile" => Box::new(MicroSirenTile),
         other => panic!("unknown encoder: {other}"),

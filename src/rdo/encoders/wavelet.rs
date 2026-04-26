@@ -7,9 +7,29 @@
 use crate::rdo::types::{EncodedRegion, LmsTile, RegionEncoder, TILE_SIZE, FIX_SCALE};
 
 const HALF: usize = TILE_SIZE / 2; // 16
-const Q_STEP: i64 = FIX_SCALE / 256; // quantization step ~3906
+// Q_STEP is now quality-dependent — see WaveletTile struct
 
-pub struct WaveletTile;
+pub struct WaveletTile {
+    /// Quantization step: FIX_SCALE / q_divisor.
+    /// Higher quality_lambda → smaller q_step → finer quantization.
+    pub q_step: i64,
+}
+
+impl WaveletTile {
+    pub fn new(quality_lambda: i64) -> Self {
+        // q_step = max(1, round(FIX_SCALE * 256 / (256 * sqrt(q))))
+        //        = max(1, round(FIX_SCALE / sqrt(q)))
+        // where q = quality_lambda / FIX_SCALE (normalized quality)
+        // q=1    → q_step = FIX_SCALE/256  = 3906   (coarse)
+        // q=4    → q_step = FIX_SCALE/512  = 1953
+        // q=10   → q_step = FIX_SCALE/810  = 1234
+        // q=100  → q_step = FIX_SCALE/2560 = 390
+        // q=1000 → q_step = FIX_SCALE/8098 = 123
+        let q_norm = (quality_lambda as f64 / FIX_SCALE as f64).max(1.0);
+        let q_step = (FIX_SCALE as f64 / (256.0 * q_norm.sqrt())).round() as i64;
+        Self { q_step: q_step.max(1) }
+    }
+}
 
 /// Forward 2D Haar on a TILE_SIZE×TILE_SIZE plane (row-major, fixed-point).
 /// Returns [LL, LH, HL, HH] each of size HALF×HALF.
@@ -54,14 +74,14 @@ fn haar_inverse(ll: &[i64], lh: &[i64], hl: &[i64], hh: &[i64]) -> [i64; TILE_SI
     out
 }
 
-/// Quantize: divide by Q_STEP and round.
-fn quantize(v: i64) -> i16 {
-    (v / Q_STEP).clamp(i16::MIN as i64, i16::MAX as i64) as i16
+/// Quantize: divide by q_step and round.
+fn quantize(v: i64, q_step: i64) -> i16 {
+    (v / q_step).clamp(i16::MIN as i64, i16::MAX as i64) as i16
 }
 
-/// Dequantize: multiply by Q_STEP.
-fn dequantize(v: i16) -> i64 {
-    v as i64 * Q_STEP
+/// Dequantize: multiply by q_step.
+fn dequantize(v: i16, q_step: i64) -> i64 {
+    v as i64 * q_step
 }
 
 /// RLE encode a slice of i16 values.
@@ -124,10 +144,11 @@ impl RegionEncoder for WaveletTile {
 
             // Quantize all subbands — LL uses finer step (divide by 1 less)
             let mut coeffs = Vec::with_capacity(4 * HALF * HALF);
-            for &v in &ll { coeffs.push(quantize(v)); }
-            for &v in &lh { coeffs.push(quantize(v)); }
-            for &v in &hl { coeffs.push(quantize(v)); }
-            for &v in &hh { coeffs.push(quantize(v)); }
+            let qs = self.q_step;
+            for &v in &ll { coeffs.push(quantize(v, qs)); }
+            for &v in &lh { coeffs.push(quantize(v, qs)); }
+            for &v in &hl { coeffs.push(quantize(v, qs)); }
+            for &v in &hh { coeffs.push(quantize(v, qs)); }
 
             let encoded = rle_encode(&coeffs);
             // Write channel length prefix (u32 LE) then data
@@ -135,20 +156,26 @@ impl RegionEncoder for WaveletTile {
             payload.extend_from_slice(&encoded);
         }
 
-        let rate_bits = (payload.len() * 8) as u64;
+        // Prepend q_step to payload so decoder knows quantization
+        let mut full_payload = self.q_step.to_le_bytes().to_vec();
+        full_payload.extend_from_slice(&payload);
+        let rate_bits = (full_payload.len() * 8) as u64;
         EncodedRegion {
             encoder_name: self.name(),
             rate_bits,
             decode_cost: (TILE_SIZE * TILE_SIZE * 3 * 8) as u64,
             encode_cost: (TILE_SIZE * TILE_SIZE * 3 * 8) as u64,
-            memory_cost: payload.len() as u64,
+            memory_cost: full_payload.len() as u64,
             replay_cost: (TILE_SIZE * TILE_SIZE * 3 * 8) as u64,
-            payload,
+            payload: full_payload,
         }
     }
 
     fn decode(&self, encoded: &EncodedRegion, out: &mut LmsTile) {
         let p = &encoded.payload;
+        // First 8 bytes are q_step
+        let q_step = i64::from_le_bytes(p[0..8].try_into().unwrap());
+        let p = &p[8..];
         let n_coeffs = 4 * HALF * HALF;
         let mut offset = 0usize;
 
@@ -160,14 +187,14 @@ impl RegionEncoder for WaveletTile {
 
             let mut ll = [0i64; HALF*HALF];
             let mut lh = [0i64; HALF*HALF];
-            let mut hl = [0i64; HALF*HALF];
             let mut hh = [0i64; HALF*HALF];
+            let mut hl = [0i64; HALF*HALF];
 
             for i in 0..HALF*HALF {
-                ll[i] = dequantize(*coeffs.get(i).unwrap_or(&0));
-                lh[i] = dequantize(*coeffs.get(HALF*HALF + i).unwrap_or(&0));
-                hl[i] = dequantize(*coeffs.get(2*HALF*HALF + i).unwrap_or(&0));
-                hh[i] = dequantize(*coeffs.get(3*HALF*HALF + i).unwrap_or(&0));
+                ll[i] = dequantize(*coeffs.get(i).unwrap_or(&0), q_step);
+                lh[i] = dequantize(*coeffs.get(HALF*HALF + i).unwrap_or(&0), q_step);
+                hl[i] = dequantize(*coeffs.get(2*HALF*HALF + i).unwrap_or(&0), q_step);
+                hh[i] = dequantize(*coeffs.get(3*HALF*HALF + i).unwrap_or(&0), q_step);
             }
 
             let recon = haar_inverse(&ll, &lh, &hl, &hh);

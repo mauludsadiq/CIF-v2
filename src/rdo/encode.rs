@@ -75,17 +75,17 @@ pub fn rdo_encode(input: &Path, out: &Path, tile_size: u32, quality: f64) -> Res
     }
 
     // Build candidate encoder set
+    let quality_lambda = (quality * FIX_SCALE as f64).round() as i64;
+    let weights = Weights::v0(quality_lambda);
+
     let encoders: Vec<Box<dyn RegionEncoder>> = vec![
         Box::new(ConstantLms),
         Box::new(AffineLms),
         Box::new(QuadraticLms),
-        Box::new(WaveletTile),
+        Box::new(WaveletTile::new(quality_lambda)),
         Box::new(EdgeTile),
         Box::new(MicroSirenTile),
     ];
-
-    let quality_lambda = (quality * FIX_SCALE as f64).round() as i64;
-    let weights = Weights::v0(quality_lambda);
 
     // Process tiles
     let mut regions = Vec::new();

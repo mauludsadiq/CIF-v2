@@ -109,6 +109,12 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         compare: bool,
     },
+    RdoInspect {
+        #[arg(long)]
+        artifact: PathBuf,
+        #[arg(long)]
+        source: Option<PathBuf>,
+    },
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -185,6 +191,8 @@ fn main() -> Result<()> {
             crate::rdo::render::rdo_render(&artifact, &out, width, height),
         Commands::RdoBench { input, quality, compare } =>
             crate::rdo::bench::rdo_bench(&input, quality, compare),
+        Commands::RdoInspect { artifact, source } =>
+            crate::rdo::inspect::rdo_inspect(&artifact, source.as_deref()),
     }
 }
 
