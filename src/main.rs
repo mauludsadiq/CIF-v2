@@ -106,6 +106,8 @@ enum Commands {
         input: PathBuf,
         #[arg(long, default_value_t = 1.0)]
         quality: f64,
+        #[arg(long, default_value_t = false)]
+        compare: bool,
     },
 }
 
@@ -181,8 +183,8 @@ fn main() -> Result<()> {
             }),
         Commands::RdoRender { artifact, out, width, height } =>
             crate::rdo::render::rdo_render(&artifact, &out, width, height),
-        Commands::RdoBench { input, quality } =>
-            crate::rdo::bench::rdo_bench(&input, quality),
+        Commands::RdoBench { input, quality, compare } =>
+            crate::rdo::bench::rdo_bench(&input, quality, compare),
     }
 }
 

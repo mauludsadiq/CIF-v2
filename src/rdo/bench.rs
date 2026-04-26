@@ -9,7 +9,7 @@ use std::fs;
 use std::time::Instant;
 use serde_json::Value;
 
-pub fn rdo_bench(corpus: &Path, quality: f64) -> Result<()> {
+pub fn rdo_bench(corpus: &Path, quality: f64, compare: bool) -> Result<()> {
     let mut entries: Vec<_> = fs::read_dir(corpus)?
         .filter_map(|e| e.ok())
         .filter(|e| {
@@ -81,6 +81,57 @@ pub fn rdo_bench(corpus: &Path, quality: f64) -> Result<()> {
         "TOTAL", total_tiles,
         totals[0], totals[1], totals[2], totals[3], totals[4], totals[5],
         (total_size + 512) / 1024, total_ms);
+
+    if compare {
+        println!();
+        println!("External codec comparison (quality: avif=60 jxl=60 webp=60):");
+        println!("{:<22} {:<8} {:>8} {:>10} {:>10} {:>10}",
+            "image", "codec", "size_kb", "encode_ms", "decode_ms", "D_oklab");
+        println!("{}", "-".repeat(72));
+
+        for entry in &entries {
+            let input = entry.path();
+            let name = input.file_stem().unwrap().to_string_lossy().to_string();
+            let short = &name[..name.len().min(22)];
+
+            // CIF-RDO result — render and measure
+            let cifrdo_out = std::env::temp_dir().join(format!("cifv2_bench_{name}.cifrdo"));
+            let render_out = std::env::temp_dir().join(format!("cifv2_bench_{name}_render.png"));
+            std::env::set_var("CIFV2_QUIET", "1");
+            crate::rdo::encode::rdo_encode(&input, &cifrdo_out, 32, quality)?;
+            std::env::remove_var("CIFV2_QUIET");
+            std::env::set_var("CIFV2_QUIET", "1");
+            crate::rdo::render::rdo_render(&cifrdo_out, &render_out, 256, 256)?;
+            std::env::remove_var("CIFV2_QUIET");
+
+            let (w, h, ref_lms) = crate::rdo::compare::load_lms(&input)?;
+            let (_, _, rdo_lms) = crate::rdo::compare::load_lms(&render_out)?;
+            let rdo_d = crate::rdo::compare::mean_d_oklab(w, h, &ref_lms, &rdo_lms);
+            let rdo_size = {
+                let t = &cifrdo_out;
+                fs::read(t.join("regions/payloads.bin"))?.len() as u64
+                    + fs::read(t.join("regions/tree.json"))?.len() as u64
+                    + fs::read(t.join("manifest.json"))?.len() as u64
+            };
+            println!("{:<22} {:<8} {:>8} {:>10} {:>10} {:>10.6}",
+                short, "cif-rdo", (rdo_size+512)/1024, "-", "-", rdo_d);
+
+            // External codecs
+            for result in [
+                crate::rdo::compare::bench_avif(&input, 60),
+                crate::rdo::compare::bench_jxl(&input, 60.0),
+                crate::rdo::compare::bench_webp(&input, 60),
+            ] {
+                match result {
+                    Ok(r) => println!("{:<22} {:<8} {:>8} {:>10} {:>10} {:>10.6}",
+                        "", r.codec, (r.size_bytes+512)/1024,
+                        r.encode_ms, r.decode_ms, r.d_oklab),
+                    Err(e) => println!("  error: {e}"),
+                }
+            }
+            println!();
+        }
+    }
 
     Ok(())
 }

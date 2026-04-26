@@ -144,16 +144,18 @@ pub fn rdo_render(artifact: &Path, out: &Path, width: u32, height: u32) -> Resul
         format!("sha256:{s}")
     };
 
-    println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-        "ok": true,
-        "artifact_digest": artifact_digest,
-        "projection": {
-            "width": width,
-            "height": height,
-            "out": out.to_string_lossy(),
-            "render_digest": render_digest,
-        }
-    }))?);
+    if std::env::var("CIFV2_QUIET").is_err() {
+        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+            "ok": true,
+            "artifact_digest": artifact_digest,
+            "projection": {
+                "width": width,
+                "height": height,
+                "out": out.to_string_lossy(),
+                "render_digest": render_digest,
+            }
+        }))?);
+    }
 
     Ok(())
 }
