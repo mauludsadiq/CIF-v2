@@ -388,3 +388,39 @@ quadratic activates only at high quality lambda where distortion cost dominates 
 Single-level 2D Haar transform per channel on each 32x32 tile.
 Coefficients quantized and zero-RLE encoded. Variable payload length.
 rate_bits = payload length * 8.
+
+## CIF-RDO v0 — Benchmark Results
+
+Run the full corpus benchmark:
+
+    cifv2 rdo-bench --input bench/inputs --quality 1.0
+
+Results at quality=1.0 (7 images, 448 tiles total):
+
+    image              tiles  const affine  quad  wave  edge siren  size_kb   ms
+    diagonal_edge         64     56      0     8     0     0     0       32   31
+    high_frequency        64      0      0     0    64     0     0      152   29
+    low_frequency         64     64      0     0     0     0     0       31   26
+    natural_scene         64     30      0    34     0     0     0       34   27
+    sharp_synthetic       64     64      0     0     0     0     0       31   24
+    smooth_gradient       64     64      0     0     0     0     0       31   26
+    vertical_edge         64     56      0     8     0     0     0       32   24
+    TOTAL                448    334      0    50    64     0     0      343  187
+
+Encoder behavior across quality levels:
+
+    quality=1.0    const 334  affine   0  quad  50  wave  64
+    quality=10.0   const 196  affine 117  quad  44  wave  91
+    quality=100.0  const 180  affine 117  quad  35  wave 116
+
+Observations:
+
+At quality=1.0, quadratic and affine have equal rate (576 bits, 72 bytes of f32 coefficients).
+Quadratic strictly dominates affine on distortion so affine wins nothing at this quality.
+At quality=10.0+, affine wins on purely linear tiles (smooth_gradient 64/64) where quadratic
+offers no distortion improvement. This is correct — affine is cheaper to encode and becomes
+the better choice when encode_cost enters the objective in future versions.
+
+wavelet_tile wins 100% on high_frequency content at all quality levels.
+constant_lms wins on flat regions where all other encoders add rate with no distortion gain.
+edge_tile and micro_siren_tile have not yet activated on this corpus.
