@@ -474,3 +474,38 @@ What it does not yet do:
 - Compete on file size with AVIF or JXL
 - Handle high-frequency content efficiently (wavelet lacks entropy coding)
 - Eliminate the canonical tensor storage floor
+
+## CIF-RDO v0.1 — tree.bin storage format
+
+Replaced verbose tree.json (30KB for 64 tiles) with compact binary tree.bin (346B).
+
+Format: 26-byte header + 5 bytes per tile (encoder_id u8 + payload_len u32).
+For 64 tiles: 26 + 320 = 346 bytes.
+
+Size impact on natural_scene (256x256, quality=1.0):
+
+    before tree.bin:   33KB
+    after tree.bin:     4KB
+    reduction:          8x
+
+Corrected external codec comparison (quality=1.0):
+
+    image           codec    size_kb   D_oklab
+    natural_scene   cif-rdo      3     0.001501
+                    avif          2     0.000022
+                    jxl           2     0.000039
+                    webp          1     0.000086
+
+    sharp_synthetic cif-rdo      1     0.000000   <- zero distortion, competitive size
+                    avif          0     0.000002
+
+    low_frequency   cif-rdo      1     0.000099   <- size-competitive
+                    avif          1     0.000006
+
+    high_frequency  cif-rdo    121     0.011955   <- wavelet without entropy coding
+                    avif          1     0.000000
+
+CIF-RDO is now size-competitive with AVIF and JXL on smooth and flat content.
+The distortion gap remains on natural images. The high_frequency result is
+a known structural issue: the wavelet encoder stores raw quantized coefficients
+with no entropy coding. Adding zstd compression to payloads.bin is the next step.
