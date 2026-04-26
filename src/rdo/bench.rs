@@ -60,7 +60,7 @@ pub fn rdo_bench(corpus: &Path, quality: f64, compare: bool) -> Result<()> {
 
         // Artifact size
         let size = fs::read(out.join("regions/payloads.bin"))?.len() as u64
-            + fs::read(out.join("regions/tree.json"))?.len() as u64
+            + fs::read(out.join("regions/tree.bin"))?.len() as u64
             + fs::read(out.join("manifest.json"))?.len() as u64
             + fs::read(out.join("receipt.json"))?.len() as u64;
         let size_kb = (size + 512) / 1024;
@@ -110,7 +110,7 @@ pub fn rdo_bench(corpus: &Path, quality: f64, compare: bool) -> Result<()> {
             let rdo_size = {
                 let t = &cifrdo_out;
                 fs::read(t.join("regions/payloads.bin"))?.len() as u64
-                    + fs::read(t.join("regions/tree.json"))?.len() as u64
+                    + fs::read(t.join("regions/tree.bin"))?.len() as u64
                     + fs::read(t.join("manifest.json"))?.len() as u64
             };
             println!("{:<22} {:<8} {:>8} {:>10} {:>10} {:>10.6}",

@@ -14,6 +14,7 @@ use crate::rdo::encoders::wavelet::WaveletTile;
 use crate::rdo::encoders::edge::EdgeTile;
 use crate::rdo::encoders::siren::MicroSirenTile;
 use crate::rdo::select::{select_encoder, Selection};
+use crate::rdo::tree_bin::{TreeHeader, TileRecord, write_tree, encoder_id as enc_id};
 
 fn sha256_hex(bytes: &[u8]) -> String {
     let mut h = Sha256::new(); h.update(bytes);
@@ -135,22 +136,24 @@ pub fn rdo_encode(input: &Path, out: &Path, tile_size: u32, quality: f64) -> Res
     fs::create_dir_all(out)?;
     fs::create_dir_all(out.join("regions"))?;
 
-    let tree = json!({
-        "version": "CIF-RDO-v0",
-        "tile_size": tw,
-        "grid_width": grid_w,
-        "grid_height": grid_h,
-        "visible_width": iw,
-        "visible_height": ih,
-        "quality_lambda": quality_lambda.to_string(),
-        "regions": regions,
-    });
-
-    let tree_bytes = serde_json::to_string_pretty(&tree)? + "\n";
-    fs::write(out.join("regions/tree.json"), &tree_bytes)?;
+    // Write compact binary tree
+    let tree_header = TreeHeader {
+        tile_size: tw as u16,
+        grid_w: grid_w as u16,
+        grid_h: grid_h as u16,
+        visible_w: iw,
+        visible_h: ih,
+        quality_lambda: quality_lambda as u32,
+    };
+    let tile_records: Vec<TileRecord> = regions.iter().map(|r| TileRecord {
+        encoder_id: enc_id(r["encoder"].as_str().unwrap_or("constant_lms")),
+        payload_len: r["payload_len"].as_u64().unwrap_or(0) as u32,
+    }).collect();
+    let tree_bytes = write_tree(&tree_header, &tile_records);
+    fs::write(out.join("regions/tree.bin"), &tree_bytes)?;
     fs::write(out.join("regions/payloads.bin"), &payloads_bin)?;
 
-    let h_tree = sha256_hex(tree_bytes.as_bytes());
+    let h_tree = sha256_hex(&tree_bytes);
     let h_payloads = sha256_hex(&payloads_bin);
 
     let manifest = json!({
@@ -161,7 +164,7 @@ pub fn rdo_encode(input: &Path, out: &Path, tile_size: u32, quality: f64) -> Res
         "tile_size": tw,
         "quality_lambda": quality_lambda.to_string(),
         "hashes": {
-            "tree": h_tree,
+            "tree_bin": h_tree,
             "payloads": h_payloads,
         }
     });

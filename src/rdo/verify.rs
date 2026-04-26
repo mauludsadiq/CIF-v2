@@ -21,24 +21,23 @@ fn sha256_hex(bytes: &[u8]) -> String {
 pub fn rdo_verify(artifact: &Path) -> Result<serde_json::Value> {
     let manifest_bytes = fs::read(artifact.join("manifest.json"))?;
     let receipt_bytes  = fs::read(artifact.join("receipt.json"))?;
-    let tree_bytes     = fs::read(artifact.join("regions/tree.json"))?;
+    let tree_bytes     = fs::read(artifact.join("regions/tree.bin"))?;
     let payloads_bytes = fs::read(artifact.join("regions/payloads.bin"))?;
 
     let manifest: Value = serde_json::from_slice(&manifest_bytes)?;
     let receipt:  Value = serde_json::from_slice(&receipt_bytes)?;
-    let tree:     Value = serde_json::from_slice(&tree_bytes)?;
 
     // Step 1: verify component digests against manifest
     let h_tree     = sha256_hex(&tree_bytes);
     let h_payloads = sha256_hex(&payloads_bytes);
 
-    let m_tree = manifest["hashes"]["tree"].as_str()
-        .ok_or_else(|| anyhow::anyhow!("missing manifest.hashes.tree"))?;
+    let m_tree = manifest["hashes"]["tree_bin"].as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing manifest.hashes.tree_bin"))?;
     let m_payloads = manifest["hashes"]["payloads"].as_str()
         .ok_or_else(|| anyhow::anyhow!("missing manifest.hashes.payloads"))?;
 
     if h_tree != m_tree {
-        bail!("tree.json digest mismatch: got {h_tree}, expected {m_tree}");
+        bail!("tree.bin digest mismatch: got {h_tree}, expected {m_tree}");
     }
     if h_payloads != m_payloads {
         bail!("payloads.bin digest mismatch: got {h_payloads}, expected {m_payloads}");
@@ -65,36 +64,20 @@ pub fn rdo_verify(artifact: &Path) -> Result<serde_json::Value> {
         bail!("artifact digest mismatch: got {artifact_digest}, expected {r_artifact}");
     }
 
-    // Step 4: verify each region's payload_digest
-    let regions = tree["regions"].as_array()
-        .ok_or_else(|| anyhow::anyhow!("missing regions array"))?;
-
-    let mut regions_verified = 0usize;
-    for region in regions {
-        let offset = region["payload_offset"].as_u64()
-            .ok_or_else(|| anyhow::anyhow!("missing payload_offset"))? as usize;
-        let len = region["payload_len"].as_u64()
-            .ok_or_else(|| anyhow::anyhow!("missing payload_len"))? as usize;
-        let expected_digest = region["payload_digest"].as_str()
-            .ok_or_else(|| anyhow::anyhow!("missing payload_digest"))?;
-        let id = region["id"].as_u64().unwrap_or(0);
-
-        if offset + len > payloads_bytes.len() {
-            bail!("region {id}: payload out of bounds");
-        }
-        let actual_digest = sha256_hex(&payloads_bytes[offset..offset+len]);
-        if actual_digest != expected_digest {
-            bail!("region {id}: payload digest mismatch");
-        }
-        regions_verified += 1;
+    // tree.bin stores no per-region digests — payload integrity is covered
+    // by the payloads digest in the manifest.
+    let (hdr, tile_records) = crate::rdo::tree_bin::read_tree(&tree_bytes)?;
+    let n_tiles = tile_records.len();
+    // Verify payloads.bin length matches sum of payload_lens
+    let expected_len: usize = tile_records.iter().map(|t| t.payload_len as usize).sum();
+    if expected_len != payloads_bytes.len() {
+        bail!("payloads.bin length mismatch: tree.bin expects {expected_len}, got {}", payloads_bytes.len());
     }
 
     Ok(serde_json::json!({
         "ok": true,
         "artifact_digest": artifact_digest,
-        "regions_verified": regions_verified,
-        "grid": format!("{}x{}",
-            tree["grid_width"].as_u64().unwrap_or(0),
-            tree["grid_height"].as_u64().unwrap_or(0)),
+        "tiles_verified": n_tiles,
+        "grid": format!("{}x{}", hdr.grid_w, hdr.grid_h),
     }))
 }

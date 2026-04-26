@@ -7,3 +7,4 @@ pub mod verify;
 pub mod render;
 pub mod bench;
 pub mod compare;
+pub mod tree_bin;

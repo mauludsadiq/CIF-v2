@@ -8,6 +8,7 @@ use std::path::Path;
 use std::fs;
 use image::{ImageBuffer, Rgba};
 use serde_json::Value;
+use crate::rdo::tree_bin::{read_tree, encoder_name};
 
 use crate::rdo::types::{LmsTile, TILE_SIZE, FIX_SCALE};
 use crate::rdo::encoders::constant::ConstantLms;
@@ -42,46 +43,42 @@ fn get_encoder(name: &str) -> Box<dyn RegionEncoder> {
 }
 
 pub fn rdo_render(artifact: &Path, out: &Path, width: u32, height: u32) -> Result<()> {
-    let tree_bytes    = fs::read(artifact.join("regions/tree.json"))?;
+    let tree_bytes    = fs::read(artifact.join("regions/tree.bin"))?;
     let payload_bytes = fs::read(artifact.join("regions/payloads.bin"))?;
     let receipt: Value = serde_json::from_slice(&fs::read(artifact.join("receipt.json"))?)?;
-    let tree: Value   = serde_json::from_slice(&tree_bytes)?;
 
     let artifact_digest = receipt["artifact_digest"].as_str().unwrap_or("unknown").to_string();
-    let visible_w = tree["visible_width"].as_u64().unwrap() as usize;
-    let visible_h = tree["visible_height"].as_u64().unwrap() as usize;
-    let tile_size = tree["tile_size"].as_u64().unwrap() as usize;
-    let grid_w = tree["grid_width"].as_u64().unwrap() as usize;
-    let grid_h = tree["grid_height"].as_u64().unwrap() as usize;
+    let (hdr, tile_records) = read_tree(&tree_bytes)?;
+    let visible_w = hdr.visible_w as usize;
+    let visible_h = hdr.visible_h as usize;
+    let tile_size = hdr.tile_size as usize;
+    let grid_w    = hdr.grid_w as usize;
+    let grid_h    = hdr.grid_h as usize;
 
     // Decode all tiles into a full LMS buffer
     let pad_w = grid_w * tile_size;
     let pad_h = grid_h * tile_size;
     let mut lms_buf = vec![[0i64; 3]; pad_w * pad_h];
 
-    let regions = tree["regions"].as_array().unwrap();
-    for region in regions {
-        let encoder_name = region["encoder"].as_str().unwrap();
-        let offset = region["payload_offset"].as_u64().unwrap() as usize;
-        let len    = region["payload_len"].as_u64().unwrap() as usize;
-        let gx     = region["bounds"][0].as_u64().unwrap() as usize / tile_size;
-        let gy     = region["bounds"][1].as_u64().unwrap() as usize / tile_size;
+    let mut payload_offset = 0usize;
+    for (idx, rec) in tile_records.iter().enumerate() {
+        let gx = idx % grid_w;
+        let gy = idx / grid_w;
+        let enc_name = encoder_name(rec.encoder_id);
+        let len = rec.payload_len as usize;
 
-        let encoder = get_encoder(encoder_name);
+        let encoder = get_encoder(enc_name);
         let encoded = crate::rdo::types::EncodedRegion {
             encoder_name: encoder.name(),
-            payload: payload_bytes[offset..offset+len].to_vec(),
-            rate_bits: region["rate_bits"].as_u64().unwrap_or(0),
-            decode_cost: region["decode_cost"].as_u64().unwrap_or(0),
-            encode_cost: region["encode_cost"].as_u64().unwrap_or(0),
-            memory_cost: region["memory_cost"].as_u64().unwrap_or(0),
-            replay_cost: region["replay_cost"].as_u64().unwrap_or(0),
+            payload: payload_bytes[payload_offset..payload_offset+len].to_vec(),
+            rate_bits: 0, decode_cost: 0, encode_cost: 0,
+            memory_cost: 0, replay_cost: 0,
         };
+        payload_offset += len;
 
         let mut tile = LmsTile::new(gx, gy);
         encoder.decode(&encoded, &mut tile);
 
-        // Write tile into lms_buf
         for ty in 0..tile_size {
             for tx in 0..tile_size {
                 let px = gx * tile_size + tx;
