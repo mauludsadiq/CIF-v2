@@ -12,7 +12,7 @@ impl RegionEncoder for QuadraticLms {
     fn name(&self) -> &'static str { "quadratic_lms" }
 
     fn encode(&self, tile: &LmsTile) -> EncodedRegion {
-        let mut payload = Vec::with_capacity(144);
+        let mut payload = Vec::with_capacity(72); // 6 f32 × 3 channels
         let cx = (TILE_SIZE - 1) as f64 / 2.0;
         let cy = (TILE_SIZE - 1) as f64 / 2.0;
 
@@ -55,18 +55,18 @@ impl RegionEncoder for QuadraticLms {
                 a[5],
             ];
 
-            let to_fixed = |v: f64| -> i64 { (v * FIX_SCALE as f64).round() as i64 };
+            // Store as f32 — quadratic coefficients are fitting results, not measurements
             for &coeff in &orig {
-                payload.extend_from_slice(&to_fixed(coeff).to_le_bytes());
+                payload.extend_from_slice(&(coeff as f32).to_le_bytes());
             }
         }
 
         EncodedRegion {
             encoder_name: self.name(),
-            rate_bits: 1152,
+            rate_bits: (payload.len() * 8) as u64, // 72 bytes = 576 bits
             decode_cost: (TILE_SIZE * TILE_SIZE * 3 * 6) as u64,
             encode_cost: (TILE_SIZE * TILE_SIZE * 3 * 36) as u64,
-            memory_cost: 144,
+            memory_cost: payload.len() as u64,
             replay_cost: (TILE_SIZE * TILE_SIZE * 3 * 36) as u64,
             payload,
         }
@@ -75,23 +75,22 @@ impl RegionEncoder for QuadraticLms {
     fn decode(&self, encoded: &EncodedRegion, out: &mut LmsTile) {
         let p = &encoded.payload;
         for c in 0..3 {
-            let base = c * 48;
-            let mut a = [0i64; 6];
+            let base = c * 24; // 6 f32 = 24 bytes per channel
+            let mut a = [0f32; 6];
             for i in 0..6 {
-                a[i] = i64::from_le_bytes(p[base+i*8..base+i*8+8].try_into().unwrap());
+                a[i] = f32::from_le_bytes(p[base+i*4..base+i*4+4].try_into().unwrap());
             }
             for y in 0..TILE_SIZE {
                 for x in 0..TILE_SIZE {
-                    let xf = x as i64;
-                    let yf = y as i64;
-                    // All terms in fixed-point: divide by FIX_SCALE where needed
+                    let xf = x as f32;
+                    let yf = y as f32;
                     let v = a[0]
                         + a[1] * xf
                         + a[2] * yf
-                        + a[3] * xf * xf / FIX_SCALE
-                        + a[4] * yf * yf / FIX_SCALE
-                        + a[5] * xf * yf / FIX_SCALE;
-                    out.set(x, y, c, v);
+                        + a[3] * xf * xf
+                        + a[4] * yf * yf
+                        + a[5] * xf * yf;
+                    out.set(x, y, c, (v * FIX_SCALE as f32).round() as i64);
                 }
             }
         }
