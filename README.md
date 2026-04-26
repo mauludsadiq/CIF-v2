@@ -424,3 +424,53 @@ the better choice when encode_cost enters the objective in future versions.
 wavelet_tile wins 100% on high_frequency content at all quality levels.
 constant_lms wins on flat regions where all other encoders add rate with no distortion gain.
 edge_tile and micro_siren_tile have not yet activated on this corpus.
+
+## External Codec Comparison
+
+Benchmark CIF-RDO against AVIF, JXL, and WebP:
+
+    cifv2 rdo-bench --input bench/inputs --quality 1.0 --compare
+
+Results on natural_scene (256x256):
+
+    codec          size_kb   D_oklab
+    cif-rdo           33     0.001501
+    avif (q=60)        2     0.000022
+    jxl (q=60)         2     0.000039
+    webp (q=60)        1     0.000086
+
+Lossless comparison (natural_scene):
+
+    source PNG         7.2KB
+    JXL lossless       7.8KB
+    AVIF lossless       17KB
+    CIF-RDO q=1         33KB   (not lossless, D_oklab=0.001501)
+
+Honest assessment:
+
+CIF-RDO v0 is not yet a competitive compression codec.
+It is a working deterministic optimizer with weak candidate encoders.
+
+The gap is structural. The canonical LMS tensor (44KB zstd) dominates
+artifact size regardless of region payload efficiency. Modern codecs
+exploit global entropy coding, prediction, and context modeling across
+the entire image. CIF-RDO currently stores independent per-tile payloads
+with no cross-tile entropy coding.
+
+The next architectural step is global entropy coding over the selected
+region payload streams — encoding all encoder IDs together, all constants
+together, all wavelet coefficients together — as a symbolic stream rather
+than independent payload blobs. That is how the gap closes.
+
+What CIF-RDO does correctly:
+
+- Deterministic region selection under a fixed objective function
+- Content-adaptive encoder choice (constant/affine/quadratic/wavelet)
+- Verifiable artifact digest invariant across render resolutions
+- Zero D_oklab on flat and linear content (sharp_synthetic, smooth_gradient)
+
+What it does not yet do:
+
+- Compete on file size with AVIF or JXL
+- Handle high-frequency content efficiently (wavelet lacks entropy coding)
+- Eliminate the canonical tensor storage floor
