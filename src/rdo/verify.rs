@@ -1,6 +1,7 @@
 //! CIF-RDO v0 artifact verifier.
 
 use anyhow::{bail, Result};
+use std::io::Read;
 use std::path::Path;
 use std::fs;
 use sha2::{Digest, Sha256};
@@ -22,7 +23,7 @@ pub fn rdo_verify(artifact: &Path) -> Result<serde_json::Value> {
     let manifest_bytes = fs::read(artifact.join("manifest.json"))?;
     let receipt_bytes  = fs::read(artifact.join("receipt.json"))?;
     let tree_bytes     = fs::read(artifact.join("regions/tree.bin"))?;
-    let payloads_bytes = fs::read(artifact.join("regions/payloads.bin"))?;
+    let payloads_bytes = fs::read(artifact.join("regions/payloads.bin.zst"))?;
 
     let manifest: Value = serde_json::from_slice(&manifest_bytes)?;
     let receipt:  Value = serde_json::from_slice(&receipt_bytes)?;
@@ -33,14 +34,14 @@ pub fn rdo_verify(artifact: &Path) -> Result<serde_json::Value> {
 
     let m_tree = manifest["hashes"]["tree_bin"].as_str()
         .ok_or_else(|| anyhow::anyhow!("missing manifest.hashes.tree_bin"))?;
-    let m_payloads = manifest["hashes"]["payloads"].as_str()
-        .ok_or_else(|| anyhow::anyhow!("missing manifest.hashes.payloads"))?;
+    let m_payloads = manifest["hashes"]["payloads_zst"].as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing manifest.hashes.payloads_zst"))?;
 
     if h_tree != m_tree {
         bail!("tree.bin digest mismatch: got {h_tree}, expected {m_tree}");
     }
     if h_payloads != m_payloads {
-        bail!("payloads.bin digest mismatch: got {h_payloads}, expected {m_payloads}");
+        bail!("payloads.bin.zst digest mismatch: got {h_payloads}, expected {m_payloads}");
     }
 
     // Step 2: verify manifest digest against receipt
@@ -68,10 +69,11 @@ pub fn rdo_verify(artifact: &Path) -> Result<serde_json::Value> {
     // by the payloads digest in the manifest.
     let (hdr, tile_records) = crate::rdo::tree_bin::read_tree(&tree_bytes)?;
     let n_tiles = tile_records.len();
-    // Verify payloads.bin length matches sum of payload_lens
+    // Decompress and verify payload length matches tree.bin
+    let payloads_decompressed = zstd::decode_all(payloads_bytes.as_slice())?;
     let expected_len: usize = tile_records.iter().map(|t| t.payload_len as usize).sum();
-    if expected_len != payloads_bytes.len() {
-        bail!("payloads.bin length mismatch: tree.bin expects {expected_len}, got {}", payloads_bytes.len());
+    if expected_len != payloads_decompressed.len() {
+        bail!("payloads length mismatch: tree.bin expects {expected_len}, got {}", payloads_decompressed.len());
     }
 
     Ok(serde_json::json!({

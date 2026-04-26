@@ -4,6 +4,7 @@
 //! the result into an output PNG at any target resolution.
 
 use anyhow::Result;
+use std::io::Read;
 use std::path::Path;
 use std::fs;
 use image::{ImageBuffer, Rgba};
@@ -44,7 +45,8 @@ fn get_encoder(name: &str) -> Box<dyn RegionEncoder> {
 
 pub fn rdo_render(artifact: &Path, out: &Path, width: u32, height: u32) -> Result<()> {
     let tree_bytes    = fs::read(artifact.join("regions/tree.bin"))?;
-    let payload_bytes = fs::read(artifact.join("regions/payloads.bin"))?;
+    let payload_compressed = fs::read(artifact.join("regions/payloads.bin.zst"))?;
+    let payload_bytes = zstd::decode_all(payload_compressed.as_slice())?;
     let receipt: Value = serde_json::from_slice(&fs::read(artifact.join("receipt.json"))?)?;
 
     let artifact_digest = receipt["artifact_digest"].as_str().unwrap_or("unknown").to_string();

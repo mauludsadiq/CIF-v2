@@ -151,10 +151,11 @@ pub fn rdo_encode(input: &Path, out: &Path, tile_size: u32, quality: f64) -> Res
     }).collect();
     let tree_bytes = write_tree(&tree_header, &tile_records);
     fs::write(out.join("regions/tree.bin"), &tree_bytes)?;
-    fs::write(out.join("regions/payloads.bin"), &payloads_bin)?;
+    let payloads_compressed = zstd::encode_all(payloads_bin.as_slice(), 3)?;
+    fs::write(out.join("regions/payloads.bin.zst"), &payloads_compressed)?;
 
     let h_tree = sha256_hex(&tree_bytes);
-    let h_payloads = sha256_hex(&payloads_bin);
+    let h_payloads = sha256_hex(&payloads_compressed);
 
     let manifest = json!({
         "format": "CIF-RDO-v0",
@@ -165,7 +166,7 @@ pub fn rdo_encode(input: &Path, out: &Path, tile_size: u32, quality: f64) -> Res
         "quality_lambda": quality_lambda.to_string(),
         "hashes": {
             "tree_bin": h_tree,
-            "payloads": h_payloads,
+            "payloads_zst": h_payloads,
         }
     });
     let manifest_bytes = serde_json::to_string_pretty(&manifest)? + "\n";
