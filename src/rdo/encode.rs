@@ -12,6 +12,7 @@ use crate::rdo::encoders::affine::AffineLms;
 use crate::rdo::encoders::quadratic::QuadraticLms;
 use crate::rdo::encoders::wavelet::WaveletTile;
 use crate::rdo::encoders::edge::EdgeTile;
+use crate::rdo::encoders::siren::MicroSirenTile;
 use crate::rdo::select::{select_encoder, Selection};
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -79,6 +80,7 @@ pub fn rdo_encode(input: &Path, out: &Path, tile_size: u32, quality: f64) -> Res
         Box::new(QuadraticLms),
         Box::new(WaveletTile),
         Box::new(EdgeTile),
+        Box::new(MicroSirenTile),
     ];
 
     let quality_lambda = (quality * FIX_SCALE as f64).round() as i64;
