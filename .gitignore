@@ -10,3 +10,14 @@ render_*.png
 render_*.projection.json
 capture_*.cifv2/
 test_edges.png
+capture_*.cifv2
+capture_*.cifrdo
+capture_*.cifv2f
+replay_*.cifv2
+render_*.png
+rdo_render_*.png
+test_*.png
+test_*.jpg
+bench/artifacts/
+bench/renders/
+/tmp/
