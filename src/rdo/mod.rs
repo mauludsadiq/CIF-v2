@@ -5,3 +5,4 @@ pub mod select;
 pub mod encode;
 pub mod verify;
 pub mod render;
+pub mod bench;

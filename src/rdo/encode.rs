@@ -186,13 +186,15 @@ pub fn rdo_encode(input: &Path, out: &Path, tile_size: u32, quality: f64) -> Res
     });
     fs::write(out.join("receipt.json"), serde_json::to_string_pretty(&receipt)? + "\n")?;
 
-    println!("{}", serde_json::to_string_pretty(&json!({
-        "ok": true,
-        "artifact_digest": artifact_digest,
-        "grid": format!("{}x{}", grid_w, grid_h),
-        "tiles": grid_w * grid_h,
-        "out": out.to_string_lossy(),
-    }))?);
+    if std::env::var("CIFV2_QUIET").is_err() {
+        println!("{}", serde_json::to_string_pretty(&json!({
+            "ok": true,
+            "artifact_digest": artifact_digest,
+            "grid": format!("{}x{}", grid_w, grid_h),
+            "tiles": grid_w * grid_h,
+            "out": out.to_string_lossy(),
+        }))?);
+    }
 
     Ok(())
 }
