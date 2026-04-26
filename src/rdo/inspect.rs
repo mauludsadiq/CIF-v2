@@ -15,6 +15,7 @@ use crate::rdo::encoders::constant::ConstantLms;
 use crate::rdo::encoders::affine::AffineLms;
 use crate::rdo::encoders::quadratic::QuadraticLms;
 use crate::rdo::encoders::wavelet::WaveletTile;
+use crate::rdo::encoders::dct::DctTile;
 use crate::rdo::encoders::edge::EdgeTile;
 use crate::rdo::encoders::siren::MicroSirenTile;
 use crate::rdo::types::RegionEncoder;
@@ -25,6 +26,7 @@ fn get_encoder(name: &str) -> Box<dyn RegionEncoder> {
         "affine_lms"      => Box::new(AffineLms),
         "quadratic_lms"   => Box::new(QuadraticLms),
         "wavelet_tile"    => Box::new(WaveletTile::new(1)),
+        "dct_tile"        => Box::new(DctTile::new(FIX_SCALE)),
         "edge_tile"       => Box::new(EdgeTile),
         "micro_siren_tile"=> Box::new(MicroSirenTile),
         other => panic!("unknown encoder: {other}"),

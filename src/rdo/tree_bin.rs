@@ -31,6 +31,7 @@ pub const ENCODER_IDS: &[&str] = &[
     "wavelet_tile",
     "edge_tile",
     "micro_siren_tile",
+    "dct_tile",
 ];
 
 pub fn encoder_id(name: &str) -> u8 {

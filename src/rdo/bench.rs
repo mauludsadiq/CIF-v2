@@ -7,7 +7,6 @@ use anyhow::Result;
 use std::path::Path;
 use std::fs;
 use std::time::Instant;
-use serde_json::Value;
 
 pub fn rdo_bench(corpus: &Path, quality: f64, compare: bool) -> Result<()> {
     let mut entries: Vec<_> = fs::read_dir(corpus)?
@@ -25,11 +24,11 @@ pub fn rdo_bench(corpus: &Path, quality: f64, compare: bool) -> Result<()> {
     }
 
     // Header
-    println!("{:<22} {:>5} {:>6} {:>6} {:>5} {:>5} {:>5} {:>5} {:>7} {:>6}",
-        "image", "tiles", "const", "affine", "quad", "wave", "edge", "siren", "size_kb", "ms");
+    println!("{:<22} {:>5} {:>6} {:>6} {:>5} {:>5} {:>5} {:>5} {:>5} {:>7} {:>6}",
+        "image", "tiles", "const", "affine", "quad", "wave", "edge", "siren", "dct", "size_kb", "ms");
     println!("{}", "-".repeat(80));
 
-    let mut totals = [0usize; 6];
+    let mut totals = [0usize; 7];
     let mut total_size = 0u64;
     let mut total_ms = 0u64;
     let mut total_tiles = 0usize;
@@ -45,15 +44,14 @@ pub fn rdo_bench(corpus: &Path, quality: f64, compare: bool) -> Result<()> {
         std::env::remove_var("CIFV2_QUIET");
         let ms = t0.elapsed().as_millis() as u64;
 
-        let tree: Value = serde_json::from_slice(&fs::read(out.join("regions/tree.json"))?)?;
-        let regions = tree["regions"].as_array().unwrap();
-        let n = regions.len();
+        let tree_bytes = fs::read(out.join("regions/tree.bin"))?;
+        let (_hdr, tile_records) = crate::rdo::tree_bin::read_tree(&tree_bytes)?;
+        let n = tile_records.len();
 
-        let mut enc = [0usize; 6];
-        let names = ["constant_lms","affine_lms","quadratic_lms","wavelet_tile","edge_tile","micro_siren_tile"];
-        for r in regions {
-            let e = r["encoder"].as_str().unwrap_or("");
-            if let Some(i) = names.iter().position(|&n| n == e) {
+        let mut enc = [0usize; 7];
+        for r in &tile_records {
+            let i = r.encoder_id as usize;
+            if i < enc.len() {
                 enc[i] += 1;
             }
         }
@@ -65,21 +63,21 @@ pub fn rdo_bench(corpus: &Path, quality: f64, compare: bool) -> Result<()> {
             + fs::read(out.join("receipt.json"))?.len() as u64;
         let size_kb = (size + 512) / 1024;
 
-        println!("{:<22} {:>5} {:>6} {:>6} {:>5} {:>5} {:>5} {:>5} {:>7} {:>6}",
+        println!("{:<22} {:>5} {:>6} {:>6} {:>5} {:>5} {:>5} {:>5} {:>5} {:>7} {:>6}",
             &name[..name.len().min(22)], n,
-            enc[0], enc[1], enc[2], enc[3], enc[4], enc[5],
+            enc[0], enc[1], enc[2], enc[3], enc[4], enc[5], enc[6],
             size_kb, ms);
 
-        for i in 0..6 { totals[i] += enc[i]; }
+        for i in 0..7 { totals[i] += enc[i]; }
         total_size += size;
         total_ms += ms;
         total_tiles += n;
     }
 
     println!("{}", "-".repeat(80));
-    println!("{:<22} {:>5} {:>6} {:>6} {:>5} {:>5} {:>5} {:>5} {:>7} {:>6}",
+    println!("{:<22} {:>5} {:>6} {:>6} {:>5} {:>5} {:>5} {:>5} {:>5} {:>7} {:>6}",
         "TOTAL", total_tiles,
-        totals[0], totals[1], totals[2], totals[3], totals[4], totals[5],
+        totals[0], totals[1], totals[2], totals[3], totals[4], totals[5], totals[6],
         (total_size + 512) / 1024, total_ms);
 
     if compare {

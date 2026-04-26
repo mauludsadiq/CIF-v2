@@ -11,6 +11,7 @@ use crate::rdo::encoders::constant::ConstantLms;
 use crate::rdo::encoders::affine::AffineLms;
 use crate::rdo::encoders::quadratic::QuadraticLms;
 use crate::rdo::encoders::wavelet::WaveletTile;
+use crate::rdo::encoders::dct::DctTile;
 use crate::rdo::encoders::edge::EdgeTile;
 use crate::rdo::encoders::siren::MicroSirenTile;
 use crate::rdo::select::{select_encoder, Selection};
@@ -83,6 +84,7 @@ pub fn rdo_encode(input: &Path, out: &Path, tile_size: u32, quality: f64) -> Res
         Box::new(AffineLms),
         Box::new(QuadraticLms),
         Box::new(WaveletTile::new(quality_lambda)),
+        Box::new(DctTile::new(quality_lambda)),
         Box::new(EdgeTile),
         Box::new(MicroSirenTile),
     ];
