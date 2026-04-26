@@ -167,18 +167,67 @@ impl RegionEncoder for EdgeTile {
     fn name(&self) -> &'static str { "edge_tile" }
 
     fn encode(&self, tile: &LmsTile) -> EncodedRegion {
-        // Compute background mean
-        let n = (TILE_SIZE * TILE_SIZE) as i64;
-        let mut sum = [0i64; 3];
-        for y in 0..TILE_SIZE {
-            for x in 0..TILE_SIZE {
-                for c in 0..3 { sum[c] += tile.get(x, y, c); }
-            }
-        }
-        let bg = [sum[0]/n, sum[1]/n, sum[2]/n];
-
-        // Detect edges
+        // Detect edges first
         let edges = detect_edges(tile);
+
+        // Compute background: if edges exist, use mean of pixels far from any edge.
+        // Otherwise use full tile mean.
+        let bg = if edges.is_empty() {
+            let n = (TILE_SIZE * TILE_SIZE) as i64;
+            let mut sum = [0i64; 3];
+            for y in 0..TILE_SIZE {
+                for x in 0..TILE_SIZE {
+                    for c in 0..3 { sum[c] += tile.get(x, y, c); }
+                }
+            }
+            [sum[0]/n, sum[1]/n, sum[2]/n]
+        } else {
+            // Use pixels more than 4 canonical pixels from any edge segment
+            let scale = EDGE_SCALE as f32;
+            let mut sum = [0i64; 3];
+            let mut count = 0i64;
+            for y in 0..TILE_SIZE {
+                for x in 0..TILE_SIZE {
+                    let cx = x as f32 + 0.5;
+                    let cy = y as f32 + 0.5;
+                    let mut min_dist = f32::MAX;
+                    for e in &edges {
+                        let p0x = e.x0 as f32 / scale;
+                        let p0y = e.y0 as f32 / scale;
+                        let p1x = e.x1 as f32 / scale;
+                        let p1y = e.y1 as f32 / scale;
+                        let dx = p1x - p0x; let dy = p1y - p0y;
+                        let len2 = dx*dx + dy*dy;
+                        let dist = if len2 < 1e-6 {
+                            ((cx-p0x).powi(2)+(cy-p0y).powi(2)).sqrt()
+                        } else {
+                            let t = ((cx-p0x)*dx+(cy-p0y)*dy)/len2;
+                            let t = t.clamp(0.0,1.0);
+                            let nx=cx-(p0x+t*dx); let ny=cy-(p0y+t*dy);
+                            (nx*nx+ny*ny).sqrt()
+                        };
+                        if dist < min_dist { min_dist = dist; }
+                    }
+                    if min_dist > 4.0 {
+                        for c in 0..3 { sum[c] += tile.get(x, y, c); }
+                        count += 1;
+                    }
+                }
+            }
+            if count > 0 {
+                [sum[0]/count, sum[1]/count, sum[2]/count]
+            } else {
+                // All pixels near edges — fall back to mean
+                let n = (TILE_SIZE * TILE_SIZE) as i64;
+                let mut s = [0i64; 3];
+                for y in 0..TILE_SIZE {
+                    for x in 0..TILE_SIZE {
+                        for c in 0..3 { s[c] += tile.get(x, y, c); }
+                    }
+                }
+                [s[0]/n, s[1]/n, s[2]/n]
+            }
+        };
 
         // Serialize payload
         let mut payload = Vec::new();
