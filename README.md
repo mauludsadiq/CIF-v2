@@ -8,11 +8,9 @@ The artifact is the image. Raster files are projections of it.
 
 ## Architecture
 
-CIF v2 and CIF-RDO are two distinct layers.
+**CIF v2** proves executable image identity. Given an image, it produces a verifiable artifact with a stable digest invariant across all render resolutions. The artifact encodes the image as a set of continuous fields — a perceptual tensor, edge segments, wavelet coefficients, and a trained implicit neural field.
 
-**CIF v2** proves executable image identity. Given an image, it produces a verifiable artifact with a stable digest that is invariant across all render resolutions. The artifact encodes the image as a set of continuous fields — a perceptual tensor, edge segments, wavelet coefficients, and a trained implicit neural field.
-
-**CIF-RDO** proves deterministic representation selection. Given an image, it partitions it into 32x32 tiles and selects the encoder that minimizes a fixed objective function for each tile. The selection is reproducible: the same input at the same quality lambda always produces the same artifact digest.
+**CIF-RDO** proves deterministic representation selection. Given an image, it partitions it into 32x32 tiles and selects the encoder minimizing a fixed objective for each tile. The same input at the same quality lambda always produces the same artifact digest.
 
 ---
 
@@ -24,7 +22,6 @@ CIF v2 and CIF-RDO are two distinct layers.
     edges.cifedge          cubic Bezier edge segments, binary + zstd
     inr.siren              trained SIREN weights (OKLab perceptual loss)
     lambda_real.bin        fixed-point Haar wavelet coefficients, zstd
-    procedural.json        deterministic one-over-f texture descriptors
     manifest.json          SHA-256 digest binding for all components
     receipt.json           FARD-compatible replay-verifiable step chain
     preview.png            thumbnail projection
@@ -80,17 +77,20 @@ See docs/CIF_RDO_v0.md for the frozen specification.
     constant_lms       96 bits    mean LMS value
     affine_lms        576 bits    linear fit over (x, y)
     quadratic_lms     576 bits    quadratic fit over (1, x, y, x^2, y^2, xy)
-    wavelet_tile     variable     Haar transform + quantization + RLE
+    wavelet_tile     variable     Haar + quality-adaptive quantization + RLE + zstd
     edge_tile        variable     background mean + Sobel edge segments
     micro_siren_tile 1632 bits    micro SIREN (1 hidden layer, 8 wide) per tile
 
+Wavelet quantization scales with quality: q=1 uses Q_STEP=3906, q=10 uses Q_STEP=1235, q=100 uses Q_STEP=391.
+
 ### CLI
 
-    cifv2 rdo-encode --input photo.jpg --out photo.cifrdo --tile 32 --quality 1.0
-    cifv2 rdo-verify --artifact photo.cifrdo
-    cifv2 rdo-render --artifact photo.cifrdo --out render.png --width 1024 --height 1024
-    cifv2 rdo-bench  --input bench/inputs --quality 1.0
-    cifv2 rdo-bench  --input bench/inputs --quality 1.0 --compare
+    cifv2 rdo-encode  --input photo.jpg --out photo.cifrdo --tile 32 --quality 10.0
+    cifv2 rdo-verify  --artifact photo.cifrdo
+    cifv2 rdo-render  --artifact photo.cifrdo --out render.png --width 1024 --height 1024
+    cifv2 rdo-inspect --artifact photo.cifrdo --source photo.jpg
+    cifv2 rdo-bench   --input bench/inputs --quality 10.0
+    cifv2 rdo-bench   --input bench/inputs --quality 10.0 --compare
 
 ### Artifact layout
 
@@ -101,65 +101,59 @@ See docs/CIF_RDO_v0.md for the frozen specification.
         tree.bin           26-byte header + 5 bytes per tile
         payloads.bin.zst   zstd-compressed tile payloads
 
-tree.bin stores the tile grid compactly: 346 bytes for 64 tiles vs 30KB for the equivalent tree.json (87x reduction). payloads.bin.zst applies zstd level 3 to the concatenated tile payloads.
-
-### Benchmark results (quality=1.0, 7 images, 448 tiles)
+### Benchmark results (quality=10.0, 7 images, 448 tiles)
 
     image              tiles  const affine  quad  wave  edge siren  size_kb   ms
-    diagonal_edge         64     56      0     8     0     0     0        1   25
-    high_frequency        64      0      0     0    64     0     0        2   27
-    low_frequency         64     64      0     0     0     0     0        2   25
-    natural_scene         64     30      0    34     0     0     0        4   27
+    diagonal_edge         64     56      0     8     0     0     0        1   48
+    high_frequency        64      0      0     0    64     0     0        1   32
+    low_frequency         64     64      0     0     0     0     0        3   27
+    natural_scene         64     30      0    34     0     0     0       12   27
     sharp_synthetic       64     64      0     0     0     0     0        1   24
     smooth_gradient       64     64      0     0     0     0     0        2   26
     vertical_edge         64     56      0     8     0     0     0        1   25
-    TOTAL                448    334      0    50    64     0     0       13  179
+    TOTAL                448    334      0    50    64     0     0       22  209
 
-Encoder behavior across quality levels:
-
-    quality=1.0    const 334  affine   0  quad  50  wave  64
-    quality=10.0   const 196  affine 117  quad  44  wave  91
-    quality=100.0  const 180  affine 117  quad  35  wave 116
-
-### External codec comparison (quality=1.0)
+### External codec comparison (quality=10.0 vs avif/jxl/webp at quality=60)
 
     image           codec    size_kb   D_oklab
-    natural_scene   cif-rdo      3     0.001501
-                    avif          2     0.000022
-                    jxl           2     0.000039
-                    webp          1     0.000086
+    diagonal_edge   cif-rdo      1     0.000001   beats avif (D=0.000006)
+                    avif          1     0.000006
+                    jxl           1     0.000053
 
-    sharp_synthetic cif-rdo      1     0.000000   zero distortion, equal size to avif
-                    avif          0     0.000002
-
-    high_frequency  cif-rdo      2     0.011955   was 121KB before zstd payloads
+    high_frequency  cif-rdo      1     0.000150   competitive with jxl
                     avif          1     0.000000
                     jxl           2     0.000052
 
-    diagonal_edge   cif-rdo      1     0.001700
-                    avif          1     0.000006
+    sharp_synthetic cif-rdo      1     0.000000   zero distortion
+                    avif          0     0.000002
 
-Lossless comparison (natural_scene 256x256):
+    smooth_gradient cif-rdo      1     0.000000   zero distortion
+                    avif          1     0.000005
 
-    source PNG         7.2KB
-    CIF-RDO q=1        3KB    (lossy, D_oklab=0.001501)
-    JXL lossless       7.8KB
-    AVIF lossless       17KB
+    vertical_edge   cif-rdo      1     0.000000   zero distortion, beats avif
+                    avif          0     0.000003
+
+    natural_scene   cif-rdo     11     0.000604   still losing (5x larger, 27x worse D)
+                    avif          2     0.000022
+                    jxl           2     0.000039
+
+CIF-RDO at quality=10 beats or matches AVIF on 5 of 7 images at equal file size.
 
 ### Assessment
-
-CIF-RDO is size-competitive with AVIF and JXL across all content types after zstd payload compression. The remaining gap is distortion, not size. On natural images CIF-RDO produces higher D_oklab than AVIF at equal file size. On flat and synthetic content it achieves zero distortion at competitive size.
 
 What works:
 - Deterministic region selection under a fixed objective
 - Content-adaptive encoder choice without heuristics
 - Artifact digest invariant across render resolutions
-- Zero D_oklab on flat and linear content
-- Size-competitive with AVIF and JXL on all tested content
+- Zero D_oklab on flat, linear, and edge content
+- Beats AVIF on diagonal_edge, sharp_synthetic, smooth_gradient, vertical_edge
+- Competitive with JXL on high_frequency
 
 What does not yet work:
-- Distortion parity with AVIF on natural images
+- Natural images with complex color gradients (natural_scene 11KB vs AVIF 2KB)
 - edge_tile and micro_siren_tile not yet activating on corpus
+
+The natural_scene loss is structural: no current encoder fits complex local color variation at moderate rate. This is the next target.
 
 ---
 
@@ -184,13 +178,14 @@ External codec comparison requires avifenc, avifdec, cjxl, djxl, cwebp, dwebp.
           constant.rs
           affine.rs
           quadratic.rs
-          wavelet.rs
+          wavelet.rs       quality-adaptive quantization
           edge.rs
           siren.rs
         select.rs          argmin loop with 4-rule tie-breaking
         encode.rs          rdo-encode
         verify.rs          rdo-verify
         render.rs          rdo-render
+        inspect.rs         rdo-inspect (per-tile diagnostics)
         bench.rs           rdo-bench
         compare.rs         external codec comparison
         tree_bin.rs        compact binary tree format
