@@ -76,7 +76,7 @@ See docs/CIF_RDO_v0.md for the frozen specification.
 
     constant_lms       96 bits    mean LMS value
     affine_lms        576 bits    linear fit over (x, y)
-    quadratic_lms     576 bits    quadratic fit over (1, x, y, x^2, y^2, xy)
+    quadratic_lms     576 bits    quadratic fit over (1, x, y, x^2, y^2, xy)  3 ch x 6 f32
     wavelet_tile     variable     Haar + quality-adaptive quantization + RLE + zstd
     edge_tile        variable     background mean + Sobel edge segments
     micro_siren_tile 1632 bits    micro SIREN (1 hidden layer, 8 wide) per tile

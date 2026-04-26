@@ -2,7 +2,7 @@
 //!
 //! Payload: 144 bytes — 3 channels × 6 coefficients × i64 little-endian, scale FIX_SCALE.
 //! Fits: pixel(x,y)[c] = a0 + a1*x + a2*y + a3*x² + a4*y² + a5*x*y
-//! rate_bits: 1152
+//! rate_bits: 576  (3 channels × 6 f32 coefficients = 72 bytes)
 
 use crate::rdo::types::{EncodedRegion, LmsTile, RegionEncoder, TILE_SIZE, FIX_SCALE};
 
