@@ -76,10 +76,11 @@ See docs/CIF_RDO_v0.md for the frozen specification.
 
     constant_lms       96 bits    mean LMS value
     affine_lms        576 bits    linear fit over (x, y)
-    quadratic_lms     576 bits    quadratic fit over (1, x, y, x^2, y^2, xy)  3 ch x 6 f32
+    quadratic_lms     576 bits    quadratic fit over (1, x, y, x^2, y^2, xy)
     wavelet_tile     variable     Haar + quality-adaptive quantization + RLE + zstd
-    edge_tile        variable     background mean + Sobel edge segments
-    micro_siren_tile 1632 bits    micro SIREN (1 hidden layer, 8 wide) per tile
+    dct_tile         variable     32x32 normalized DCT + top-K zigzag coefficients
+    edge_tile        variable     background mean + Sobel edge segments currently inactive
+    micro_siren_tile 1632 bits    micro SIREN currently inactive
 
 Wavelet quantization scales with quality: q=1 uses Q_STEP=3906, q=10 uses Q_STEP=1235, q=100 uses Q_STEP=391.
 
@@ -103,15 +104,19 @@ Wavelet quantization scales with quality: q=1 uses Q_STEP=3906, q=10 uses Q_STEP
 
 ### Benchmark results (quality=10.0, 7 images, 448 tiles)
 
-    image              tiles  const affine  quad  wave  edge siren  size_kb   ms
-    diagonal_edge         64     56      0     8     0     0     0        1   48
-    high_frequency        64      0      0     0    64     0     0        1   32
-    low_frequency         64     64      0     0     0     0     0        3   27
-    natural_scene         64     30      0    34     0     0     0       12   27
-    sharp_synthetic       64     64      0     0     0     0     0        1   24
-    smooth_gradient       64     64      0     0     0     0     0        2   26
-    vertical_edge         64     56      0     8     0     0     0        1   25
-    TOTAL                448    334      0    50    64     0     0       22  209
+    image                  tiles  const affine  quad  wave  edge siren   dct size_kb   ms
+    --------------------------------------------------------------------------------
+    diagonal_edge             64     56      0     0     8     0     0     0       1  ~150
+    high_frequency            64      0      0     0    64     0     0     0       1  ~120
+    low_frequency             64     16     29    19     0     0     0     0       3  ~140
+    natural_scene             64      4     24     0     1     0     0    35       5  ~130
+    sharp_synthetic           64     64      0     0     0     0     0     0       1  ~120
+    smooth_gradient           64      0     64     0     0     0     0     0       2  ~120
+    vertical_edge             64     56      0     0     0     0     0     8       1  ~130
+    --------------------------------------------------------------------------------
+    TOTAL                    448    196    117    19    73     0     0    43      16  ~920
+
+DCT reduced the corpus artifact total from 22KB to 16KB. On natural_scene, DCT wins 35 tiles and reduces CIF-RDO size from about 11KB to about 5KB.
 
 ### External codec comparison (quality=10.0 vs avif/jxl/webp at quality=60)
 
@@ -130,14 +135,14 @@ Wavelet quantization scales with quality: q=1 uses Q_STEP=3906, q=10 uses Q_STEP
     smooth_gradient cif-rdo      1     0.000000   zero distortion
                     avif          1     0.000005
 
-    vertical_edge   cif-rdo      1     0.000000   zero distortion, beats avif
+    vertical_edge   cif-rdo      1     0.000176   edge_tile still inactive; DCT currently wins edge tiles
                     avif          0     0.000003
 
-    natural_scene   cif-rdo     11     0.000604   still losing (5x larger, 27x worse D)
+    natural_scene   cif-rdo      5     0.000589   improved by DCT, still behind AVIF/JXL
                     avif          2     0.000022
                     jxl           2     0.000039
 
-CIF-RDO at quality=10 beats or matches AVIF on 5 of 7 images at equal file size.
+CIF-RDO at quality=10 is size-competitive on structured images and now uses DCT for natural-image tiles, but still trails AVIF/JXL on natural-image rate-distortion.
 
 ### Assessment
 
@@ -145,15 +150,16 @@ What works:
 - Deterministic region selection under a fixed objective
 - Content-adaptive encoder choice without heuristics
 - Artifact digest invariant across render resolutions
-- Zero D_oklab on flat, linear, and edge content
-- Beats AVIF on diagonal_edge, sharp_synthetic, smooth_gradient, vertical_edge
-- Competitive with JXL on high_frequency
+- Zero or near-zero D_oklab on flat, linear, and structured content
+- DCT significantly improves natural image compression, reducing natural_scene from about 11KB to about 5KB
+- Beats or matches AVIF on several structured corpus images
 
 What does not yet work:
-- Natural images with complex color gradients (natural_scene 11KB vs AVIF 2KB)
-- edge_tile and micro_siren_tile not yet activating on corpus
+- Natural images still trail AVIF/JXL in rate-distortion
+- edge_tile is not activating and currently loses edge tiles to DCT
+- micro_siren_tile is not yet useful on the benchmark corpus
 
-The natural_scene loss is structural: no current encoder fits complex local color variation at moderate rate. This is the next target.
+The next target is edge_tile: it should dominate diagonal and vertical edge structures instead of DCT.
 
 ---
 
