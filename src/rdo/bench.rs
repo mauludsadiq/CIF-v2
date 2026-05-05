@@ -37,6 +37,8 @@ pub fn rdo_bench(corpus: &Path, quality: f64, compare: bool) -> Result<()> {
         let input = entry.path();
         let name = input.file_stem().unwrap().to_string_lossy().to_string();
         let out = std::env::temp_dir().join(format!("cifv2_bench_{name}.cifrdo"));
+        // Remove stale artifact before re-encoding
+        let _ = std::fs::remove_dir_all(&out);
 
         let t0 = Instant::now();
         std::env::set_var("CIFV2_QUIET", "1");
